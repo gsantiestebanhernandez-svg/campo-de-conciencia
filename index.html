@@ -36,8 +36,8 @@ const { useState, useEffect, useRef } = React;
 
 const SB_URL = "https://qgczftnuflxvrhlbyelb.supabase.co";
 const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFnY3pmdG51Zmx4dnJobGJ5ZWxiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODExNTUxNjgsImV4cCI6MjA5NjczMTE2OH0.yfySblwq_oIa6oMbdg2O0OXM_TzSmaL4HfSaPVdFw5M";
+const WORKER_URL = "https://anthropic-proxy.gsantiestebanhernandez.workers.dev";
 
-// ─── DATOS ─────────────────────────────────────────────────────────────────
 const PREGUNTAS_SITUACION = [
   {id:"q1",texto:"¿Qué está pasando? Describe en una o dos frases.",tipo:"texto"},
   {id:"q2",texto:"¿Cuál es tu primera reacción emocional?",tipo:"opciones",opciones:["Miedo / ansiedad","Enojo / resentimiento","Tristeza / resignación","Culpa / vergüenza","Paz / aceptación","Curiosidad / apertura","Compasión / amor"]},
@@ -86,7 +86,6 @@ const ZONAS = [
 
 const CUALIDADES = ["Presión","Calor","Frío","Nudo","Vacío","Pesadez","Vibración","Tensión","Latido","Adormecimiento","Ligereza","Expansión","Calma","Nada"];
 const AFIRMACIONES = ["Podría ver paz en lugar de esto.","No hay nada que mi santidad no pueda hacer.","El amor que soy no requiere aprobación externa.","Mi paz no depende de lo que otros hagan.","Estoy en casa. El miedo es el extraño aquí.","Lo que Dios creó no puede ser amenazado.","El amor que extiendo regresa multiplicado."];
-
 const PATRON_A_PRACTICA = {"miedo":"respiracion","urgencia":"respiracion","ansiedad":"respiracion","tensión":"respiracion","resistencia":"escaneo","resentimiento":"escaneo","control":"escaneo","culpa":"escaneo","rabia":"escaneo"};
 
 function inferirPractica(dominio,nivel,patrones){
@@ -96,7 +95,6 @@ function inferirPractica(dominio,nivel,patrones){
   return dominio==="ego"?"respiracion":"escaneo";
 }
 
-// ─── SUPABASE ──────────────────────────────────────────────────────────────
 async function sbGet(path){
   try{const r=await fetch(`${SB_URL}/rest/v1/${path}`,{headers:{"apikey":SB_KEY,"Authorization":`Bearer ${SB_KEY}`}});return r.json();}
   catch{return[];}
@@ -114,12 +112,22 @@ async function upsertPatron(patron){
   }catch{}
 }
 
-// ─── IA ───────────────────────────────────────────────────────────────────
 async function llamarIA(sistema,usuario){
-  const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1200,system:sistema,messages:[{role:"user",content:usuario}]})});
+  const r=await fetch(WORKER_URL,{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({
+      messages:[
+        {role:"system",content:sistema},
+        {role:"user",content:usuario}
+      ],
+      max_tokens:1200,
+      temperature:0.7
+    })
+  });
   if(!r.ok)throw new Error(`API ${r.status}`);
   const d=await r.json();
-  const t=d.content?.[0]?.text||"";
+  const t=d.choices?.[0]?.message?.content||"";
   if(!t)throw new Error("Respuesta vacía");
   return JSON.parse(t.replace(/```json\n?/g,"").replace(/```\n?/g,"").trim());
 }
@@ -143,7 +151,6 @@ Responde SOLO JSON: {"evidencia":"párrafo 3-4 oraciones","frase_ancla":"Tu cuer
   return llamarIA(s,"Genera la evidencia somática.");
 }
 
-// ─── ESTILOS INLINE ────────────────────────────────────────────────────────
 const S = {
   screen: {minHeight:"100vh",background:"#020617",color:"#f1f5f9",padding:"20px",paddingBottom:"80px"},
   screenGrad: (c)=>({minHeight:"100vh",background:c,color:"#f1f5f9",padding:"20px",paddingBottom:"80px"}),
@@ -168,7 +175,156 @@ const S = {
 
 const formatFecha = iso => new Date(iso).toLocaleDateString("es-ES",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"});
 
-// ─── COMPONENTES ──────────────────────────────────────────────────────────
+const NOMBRES_HAWKINS = {20:"Vergüenza",30:"Culpa",50:"Apatía",75:"Dolor",100:"Miedo",125:"Deseo",150:"Ira",175:"Orgullo",200:"Coraje",250:"Neutralidad",310:"Voluntad",350:"Aceptación",400:"Razón",500:"Amor",540:"Alegría",600:"Paz",700:"Iluminación"};
+function getNombreHawkins(n){const keys=Object.keys(NOMBRES_HAWKINS).map(Number).sort((a,b)=>a-b);let best=keys[0];for(const k of keys){if(n>=k)best=k;}return NOMBRES_HAWKINS[best];}
+function getColorHawkins(n){if(n<200)return"#f87171";if(n<350)return"#fcd34d";return"#34d399";}
+
+function TabEvolucion({setTab}){
+  const [evals,setEvals]=useState([]);
+  const [periodo,setPeriodo]=useState(7);
+  const [chartLoaded,setChartLoaded]=useState(false);
+  const canvasRef=useRef(null);
+  const chartRef=useRef(null);
+
+  useEffect(()=>{
+    (async()=>{
+      const data=await sbGet("evaluaciones_conciencia?order=created_at.asc&select=nivel_hawkins,nivel_dominante,created_at&limit=90");
+      if(Array.isArray(data)&&data.length>0)setEvals(data.filter(d=>d.nivel_hawkins));
+    })();
+  },[]);
+
+  useEffect(()=>{
+    if(window.Chart){setChartLoaded(true);return;}
+    const s=document.createElement("script");
+    s.src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js";
+    s.onload=()=>setChartLoaded(true);
+    document.head.appendChild(s);
+  },[]);
+
+  const getDemoData=()=>{
+    const base=[155,148,162,175,170,188,195,200,210,205,220,235,228,245,255,268,260,275,282,278,290,295,305,310,318,312,325,330,340,350];
+    const hoy=new Date();
+    return base.slice(-periodo).map((v,i)=>{
+      const d=new Date(hoy);d.setDate(d.getDate()-(periodo-1-i));
+      return{nivel_hawkins:v,created_at:d.toISOString()};
+    });
+  };
+
+  const getSlice=()=>evals.length===0?getDemoData():evals.slice(-periodo);
+
+  const buildTrend=(vals)=>{
+    const n=vals.length;if(n<2)return vals;
+    const xm=(n-1)/2,ym=vals.reduce((s,v)=>s+v,0)/n;
+    let num=0,den=0;
+    vals.forEach((v,i)=>{num+=(i-xm)*(v-ym);den+=(i-xm)**2;});
+    const slope=den?num/den:0;
+    return vals.map((_,i)=>Math.round(ym+slope*(i-xm)));
+  };
+
+  useEffect(()=>{
+    if(!chartLoaded||!canvasRef.current)return;
+    const slice=getSlice();
+    const labels=slice.map(d=>new Date(d.created_at).toLocaleDateString("es-ES",{day:"2-digit",month:"short"}));
+    const vals=slice.map(d=>d.nivel_hawkins);
+    const trend=buildTrend(vals);
+    const ptColors=vals.map(v=>getColorHawkins(v));
+    if(chartRef.current)chartRef.current.destroy();
+    const plugin200={id:"line200",afterDraw(chart){
+      const{ctx,scales:{x,y}}=chart;if(!y)return;
+      const yp=y.getPixelForValue(200);
+      ctx.save();ctx.setLineDash([4,4]);ctx.strokeStyle="#f87171";ctx.lineWidth=1;ctx.globalAlpha=0.5;
+      ctx.beginPath();ctx.moveTo(x.left,yp);ctx.lineTo(x.right,yp);ctx.stroke();
+      ctx.setLineDash([]);ctx.globalAlpha=1;ctx.fillStyle="#f87171";ctx.font="10px sans-serif";
+      ctx.fillText("200 · Coraje",x.right-72,yp-4);ctx.restore();
+    }};
+    chartRef.current=new window.Chart(canvasRef.current,{
+      type:"line",plugins:[plugin200],
+      data:{labels,datasets:[
+        {label:"Nivel",data:vals,borderColor:"#7c3aed",backgroundColor:"rgba(124,58,237,0.08)",borderWidth:2,pointBackgroundColor:ptColors,pointBorderColor:ptColors,pointRadius:5,pointHoverRadius:7,tension:0.35,fill:true,order:1},
+        {label:"Tendencia",data:trend,borderColor:"#34d399",borderWidth:1.5,borderDash:[5,4],pointRadius:0,tension:0,fill:false,order:2}
+      ]},
+      options:{
+        responsive:true,maintainAspectRatio:false,
+        interaction:{mode:"index",intersect:false},
+        plugins:{legend:{display:false},tooltip:{callbacks:{label:(ctx)=>`${ctx.raw} — ${getNombreHawkins(ctx.raw)}`}}},
+        scales:{
+          x:{ticks:{color:"rgba(100,116,139,0.8)",font:{size:10},maxTicksLimit:7,autoSkip:true},grid:{color:"rgba(30,41,59,0.6)"}},
+          y:{min:80,max:420,ticks:{color:"rgba(100,116,139,0.8)",font:{size:10},stepSize:50},grid:{color:"rgba(30,41,59,0.6)"}}
+        }
+      }
+    });
+    return()=>{if(chartRef.current)chartRef.current.destroy();};
+  },[chartLoaded,evals,periodo]);
+
+  const slice=getSlice();
+  const vals=slice.map(d=>d.nivel_hawkins);
+  const actual=vals[vals.length-1]||0;
+  const inicial=vals[0]||0;
+  const delta=actual-inicial;
+  const pico=Math.max(...vals);
+  const esDemo=evals.length===0;
+
+  return(
+    <div style={S.screen}>
+      <div style={{maxWidth:"360px",margin:"0 auto"}}>
+        <div style={{paddingTop:"20px",marginBottom:"16px"}}>
+          <h2 style={S.h1}>Curva de evolución</h2>
+          <p style={{fontSize:"12px",color:"#475569",marginTop:"4px"}}>Nivel de conciencia en el tiempo · Escala Hawkins</p>
+          {esDemo&&<p style={{fontSize:"11px",color:"#334155",marginTop:"4px",fontStyle:"italic"}}>* Datos simulados — haz tu primera evaluación para ver tu curva real</p>}
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginBottom:"16px"}}>
+          {[
+            {label:"Nivel actual",value:actual,sub:getNombreHawkins(actual),color:getColorHawkins(actual)},
+            {label:"Variación total",value:(delta>0?"+":"")+delta,sub:delta>0?"▲ subiendo":delta<0?"▼ bajando":"— estable",color:delta>0?"#34d399":delta<0?"#f87171":"#94a3b8"},
+            {label:"Nivel inicial",value:inicial,sub:getNombreHawkins(inicial),color:"#94a3b8"},
+            {label:"Pico alcanzado",value:pico,sub:getNombreHawkins(pico),color:getColorHawkins(pico)},
+          ].map(m=>(
+            <div key={m.label} style={{background:"rgba(15,23,42,0.7)",border:"1px solid rgba(51,65,85,0.4)",borderRadius:"12px",padding:"12px"}}>
+              <div style={{fontSize:"10px",color:"#475569",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:"4px"}}>{m.label}</div>
+              <div style={{fontSize:"22px",fontWeight:"300",color:m.color}}>{m.value}</div>
+              <div style={{fontSize:"11px",color:"#475569",marginTop:"2px"}}>{m.sub}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{background:"rgba(15,23,42,0.7)",border:"1px solid rgba(51,65,85,0.4)",borderRadius:"16px",padding:"16px",marginBottom:"12px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"12px"}}>
+            <span style={{fontSize:"12px",color:"#64748b"}}>Progresión</span>
+            <div style={{display:"flex",gap:"4px"}}>
+              {[7,14,30].map(p=>(
+                <button key={p} onClick={()=>setPeriodo(p)} style={{fontSize:"11px",padding:"3px 10px",borderRadius:"8px",cursor:"pointer",background:periodo===p?"rgba(124,58,237,0.4)":"rgba(30,41,59,0.6)",border:`1px solid ${periodo===p?"#7c3aed":"#334155"}`,color:periodo===p?"#ddd6fe":"#475569"}}>
+                  {p}d
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={{position:"relative",height:"220px"}}>
+            <canvas ref={canvasRef} role="img" aria-label="Gráfico de evolución del nivel de conciencia Hawkins"/>
+            {!chartLoaded&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{fontSize:"24px",animation:"pulse 2s infinite",color:"#7c3aed"}}>◎</div></div>}
+          </div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:"12px",marginTop:"12px",fontSize:"11px",color:"#475569"}}>
+            <span style={{display:"flex",alignItems:"center",gap:"4px"}}><span style={{width:"10px",height:"10px",borderRadius:"50%",background:"#7c3aed",display:"inline-block"}}/>Nivel calibrado</span>
+            <span style={{display:"flex",alignItems:"center",gap:"4px"}}><span style={{width:"14px",height:"2px",background:"#34d399",display:"inline-block",borderRadius:"1px"}}/>Tendencia</span>
+            <span style={{display:"flex",alignItems:"center",gap:"4px"}}><span style={{width:"10px",height:"2px",background:"#f87171",display:"inline-block",borderRadius:"1px"}}/>Umbral 200</span>
+          </div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"6px",marginBottom:"16px"}}>
+          {[
+            {nombre:"Sombra",rango:"20–175",color:"#f87171",bg:"rgba(127,29,29,0.2)"},
+            {nombre:"Transición",rango:"200–310",color:"#fcd34d",bg:"rgba(120,53,15,0.2)"},
+            {nombre:"Expansión",rango:"350–1000",color:"#34d399",bg:"rgba(2,44,34,0.3)"},
+          ].map(z=>(
+            <div key={z.nombre} style={{background:z.bg,border:`1px solid ${z.color}30`,borderRadius:"10px",padding:"10px"}}>
+              <div style={{fontSize:"10px",color:z.color,marginBottom:"2px",letterSpacing:"0.05em"}}>{z.nombre}</div>
+              <div style={{fontSize:"12px",color:"#94a3b8"}}>{z.rango}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <NavBar tab="evolucion" setTab={setTab}/>
+    </div>
+  );
+}
+
 function MapaCorporal({seleccionada,onSelect}){
   return(
     <div style={{position:"relative",width:"100%",maxWidth:"280px",margin:"0 auto"}}>
@@ -184,16 +340,7 @@ function MapaCorporal({seleccionada,onSelect}){
       {ZONAS.map(z=>(
         <button key={z.id} onClick={()=>onSelect(z.id)}
           style={{position:"absolute",transform:"translate(-50%,-50%)",left:`${z.x}%`,top:`${z.y}%`,background:"none",border:"none",cursor:"pointer",padding:"4px"}}>
-          <div style={{
-            width:seleccionada===z.id?"24px":"16px",
-            height:seleccionada===z.id?"24px":"16px",
-            borderRadius:"50%",
-            border:seleccionada===z.id?"2px solid #a78bfa":"2px solid #475569",
-            background:seleccionada===z.id?"#7c3aed":"rgba(30,41,59,0.8)",
-            display:"flex",alignItems:"center",justifyContent:"center",
-            transition:"all 0.2s",
-            boxShadow:seleccionada===z.id?"0 0 12px rgba(124,58,237,0.6)":"none"
-          }}>
+          <div style={{width:seleccionada===z.id?"24px":"16px",height:seleccionada===z.id?"24px":"16px",borderRadius:"50%",border:seleccionada===z.id?"2px solid #a78bfa":"2px solid #475569",background:seleccionada===z.id?"#7c3aed":"rgba(30,41,59,0.8)",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.2s",boxShadow:seleccionada===z.id?"0 0 12px rgba(124,58,237,0.6)":"none"}}>
             {seleccionada===z.id&&<div style={{width:"8px",height:"8px",background:"white",borderRadius:"50%"}}/>}
           </div>
         </button>
@@ -209,18 +356,8 @@ function AnimRespiracion({fase,progreso}){
     <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"32px 0",gap:"16px"}}>
       <div style={{position:"relative",width:"140px",height:"140px",display:"flex",alignItems:"center",justifyContent:"center"}}>
         <div style={{position:"absolute",inset:0,borderRadius:"50%",border:"1px solid rgba(139,92,246,0.2)",animation:"ping 3s ease-out infinite"}}/>
-        <div style={{
-          width:"96px",height:"96px",borderRadius:"50%",
-          display:"flex",alignItems:"center",justifyContent:"center",
-          transform:`scale(${escala})`,
-          background:`radial-gradient(circle, ${color}40, ${color}15)`,
-          border:`2px solid ${color}60`,
-          boxShadow:`0 0 30px ${color}25`,
-          transition:"transform 0.1s ease-out"
-        }}>
-          <span style={{color:"rgba(255,255,255,0.8)",fontSize:"12px",letterSpacing:"0.1em",textTransform:"uppercase"}}>
-            {fase==="inhala"?"Inhala":"Exhala"}
-          </span>
+        <div style={{width:"96px",height:"96px",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",transform:`scale(${escala})`,background:`radial-gradient(circle, ${color}40, ${color}15)`,border:`2px solid ${color}60`,boxShadow:`0 0 30px ${color}25`,transition:"transform 0.1s ease-out"}}>
+          <span style={{color:"rgba(255,255,255,0.8)",fontSize:"12px",letterSpacing:"0.1em",textTransform:"uppercase"}}>{fase==="inhala"?"Inhala":"Exhala"}</span>
         </div>
       </div>
       <span style={{color:"#475569",fontSize:"12px"}}>5 segundos</span>
@@ -229,12 +366,11 @@ function AnimRespiracion({fase,progreso}){
 }
 
 function NavBar({tab,setTab}){
-  const items=[{id:"inicio",icon:"◎",label:"Inicio"},{id:"ancla",icon:"⚓",label:"Ancla"},{id:"historial",icon:"📖",label:"Historial"}];
+  const items=[{id:"inicio",icon:"◎",label:"Inicio"},{id:"evolucion",icon:"📈",label:"Evolución"},{id:"ancla",icon:"⚓",label:"Ancla"},{id:"historial",icon:"📖",label:"Historial"}];
   return(
     <div style={{position:"fixed",bottom:0,left:0,right:0,background:"rgba(2,6,23,0.97)",borderTop:"1px solid #1e293b",display:"flex",zIndex:40,backdropFilter:"blur(12px)"}}>
       {items.map(i=>(
-        <button key={i.id} onClick={()=>setTab(i.id)}
-          style={{flex:1,padding:"10px 0",display:"flex",flexDirection:"column",alignItems:"center",gap:"2px",background:"none",border:"none",cursor:"pointer",color:tab===i.id?"#a78bfa":"#475569",transition:"color 0.2s"}}>
+        <button key={i.id} onClick={()=>setTab(i.id)} style={{flex:1,padding:"10px 0",display:"flex",flexDirection:"column",alignItems:"center",gap:"2px",background:"none",border:"none",cursor:"pointer",color:tab===i.id?"#a78bfa":"#475569",transition:"color 0.2s"}}>
           <span style={{fontSize:"18px",lineHeight:1}}>{i.icon}</span>
           <span style={{fontSize:"11px"}}>{i.label}</span>
         </button>
@@ -245,17 +381,10 @@ function NavBar({tab,setTab}){
 
 function BtnDetector({onClick}){
   return(
-    <button onClick={onClick} style={{
-      position:"fixed",bottom:"70px",right:"20px",zIndex:40,
-      width:"48px",height:"48px",borderRadius:"50%",
-      background:"#7c3aed",border:"none",cursor:"pointer",
-      fontSize:"20px",display:"flex",alignItems:"center",justifyContent:"center",
-      boxShadow:"0 0 20px rgba(124,58,237,0.5)",transition:"transform 0.2s"
-    }}>⚡</button>
+    <button onClick={onClick} style={{position:"fixed",bottom:"70px",right:"20px",zIndex:40,width:"48px",height:"48px",borderRadius:"50%",background:"#7c3aed",border:"none",cursor:"pointer",fontSize:"20px",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 0 20px rgba(124,58,237,0.5)",transition:"transform 0.2s"}}>⚡</button>
   );
 }
 
-// ─── APP ──────────────────────────────────────────────────────────────────
 function App(){
   const [tab,setTab]=useState("inicio");
   const [flujo,setFlujo]=useState(null);
@@ -308,7 +437,6 @@ function App(){
     })();
   },[]);
 
-  // Timer respiración
   useEffect(()=>{
     if(flujo!=="somatico"||faseSom!=="practica"||tipoPrac!=="respiracion")return;
     const META=6;let start=Date.now();let c=0;let fa="inhala";
@@ -321,7 +449,6 @@ function App(){
     return()=>clearInterval(timerRef.current);
   },[flujo,faseSom,tipoPrac]);
 
-  // Timer escaneo
   useEffect(()=>{
     if(flujo!=="somatico"||faseSom!=="practica"||tipoPrac!=="escaneo")return;
     let cnt=0;setPasoEsc(0);
@@ -408,7 +535,6 @@ function App(){
     transicion:{grad:"linear-gradient(180deg,#451a03,#020617,#020617)",label:"En Transición"},
   };
 
-  // ─── MODAL DETECTOR ──────────────────────────────────────────────────────
   function ModalDetector(){
     if(!detOpen)return null;
     const pg=PREGUNTAS_DETECTOR[detPaso];
@@ -416,13 +542,9 @@ function App(){
       <div style={{position:"fixed",inset:0,zIndex:50,background:"rgba(2,6,23,0.97)",backdropFilter:"blur(12px)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px"}}>
         <div style={{maxWidth:"360px",width:"100%"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"20px"}}>
-            <div>
-              <div style={S.label}>Detector rápido ⚡</div>
-              <div style={{color:"#475569",fontSize:"12px"}}>¿Ego o Espíritu ahora mismo?</div>
-            </div>
+            <div><div style={S.label}>Detector rápido ⚡</div><div style={{color:"#475569",fontSize:"12px"}}>¿Ego o Espíritu ahora mismo?</div></div>
             <button onClick={()=>setDetOpen(false)} style={{background:"none",border:"none",color:"#475569",fontSize:"24px",cursor:"pointer",lineHeight:1}}>×</button>
           </div>
-
           {detLoading?(
             <div style={{textAlign:"center",padding:"40px 0"}}>
               <div style={{fontSize:"32px",animation:"pulse 2s infinite"}}>◎</div>
@@ -461,12 +583,7 @@ function App(){
               <p style={{fontSize:"15px",color:"#e2e8f0",lineHeight:1.6,marginBottom:"24px"}}>{pg?.texto}</p>
               <div style={{display:"flex",flexDirection:"column",gap:"8px"}}>
                 {pg?.opciones.map((op,i)=>(
-                  <button key={op} onClick={()=>responderDet(op)} style={{
-                    ...S.btn,textAlign:"left",padding:"14px 16px",
-                    background:"rgba(15,23,42,0.6)",
-                    border:`1px solid ${i===0?"rgba(185,28,28,0.3)":i===2?"rgba(4,120,87,0.3)":"rgba(51,65,85,0.5)"}`,
-                    color:"#cbd5e1",fontSize:"14px"
-                  }}>{op}</button>
+                  <button key={op} onClick={()=>responderDet(op)} style={{...S.btn,textAlign:"left",padding:"14px 16px",background:"rgba(15,23,42,0.6)",border:`1px solid ${i===0?"rgba(185,28,28,0.3)":i===2?"rgba(4,120,87,0.3)":"rgba(51,65,85,0.5)"}`,color:"#cbd5e1",fontSize:"14px"}}>{op}</button>
                 ))}
               </div>
             </div>
@@ -476,23 +593,9 @@ function App(){
     );
   }
 
-  // ─── PANTALLAS ────────────────────────────────────────────────────────────
+  if(flujo==="loading")return(<div style={{...S.screen,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:"16px"}}><div style={{fontSize:"40px",animation:"pulse 2s infinite",color:"#a78bfa"}}>◎</div><p style={{color:"#475569",fontSize:"12px",letterSpacing:"0.15em",textTransform:"uppercase"}}>Leyendo el campo...</p><p style={{color:"#1e293b",fontSize:"12px"}}>Hawkins · ACIM · BNE</p></div>);
 
-  if(flujo==="loading")return(
-    <div style={{...S.screen,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:"16px"}}>
-      <div style={{fontSize:"40px",animation:"pulse 2s infinite",color:"#a78bfa"}}>◎</div>
-      <p style={{color:"#475569",fontSize:"12px",letterSpacing:"0.15em",textTransform:"uppercase"}}>Leyendo el campo...</p>
-      <p style={{color:"#1e293b",fontSize:"12px"}}>Hawkins · ACIM · BNE</p>
-    </div>
-  );
-
-  if(flujo==="error")return(
-    <div style={{...S.screen,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:"20px"}}>
-      <div style={{fontSize:"32px"}}>⚠</div>
-      <p style={{color:"#f87171",fontSize:"14px",textAlign:"center",maxWidth:"280px"}}>{error}</p>
-      <button onClick={volver} style={{...S.btn,...S.btnSlate,maxWidth:"200px"}}>Volver al inicio</button>
-    </div>
-  );
+  if(flujo==="error")return(<div style={{...S.screen,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:"20px"}}><div style={{fontSize:"32px"}}>⚠</div><p style={{color:"#f87171",fontSize:"14px",textAlign:"center",maxWidth:"280px"}}>{error}</p><button onClick={volver} style={{...S.btn,...S.btnSlate,maxWidth:"200px"}}>Volver al inicio</button></div>);
 
   if(flujo==="evaluacion"&&pregunta){
     const prog=(paso/preguntas.length)*100;
@@ -501,48 +604,14 @@ function App(){
         <ModalDetector/><BtnDetector onClick={abrirDet}/>
         <div style={{maxWidth:"440px",margin:"0 auto",paddingTop:"20px"}}>
           <div style={{marginBottom:"28px"}}>
-            <div style={{display:"flex",justifyContent:"space-between",fontSize:"12px",color:"#475569",marginBottom:"6px"}}>
-              <span>{tipoEval==="situacion"?"Situación":"Reflexión diaria"}</span>
-              <span>{paso+1} / {preguntas.length}</span>
-            </div>
-            <div style={{height:"2px",background:"#1e293b",borderRadius:"1px"}}>
-              <div style={{height:"2px",background:"#7c3aed",borderRadius:"1px",width:`${prog}%`,transition:"width 0.5s"}}/>
-            </div>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:"12px",color:"#475569",marginBottom:"6px"}}><span>{tipoEval==="situacion"?"Situación":"Reflexión diaria"}</span><span>{paso+1} / {preguntas.length}</span></div>
+            <div style={{height:"2px",background:"#1e293b",borderRadius:"1px"}}><div style={{height:"2px",background:"#7c3aed",borderRadius:"1px",width:`${prog}%`,transition:"width 0.5s"}}/></div>
             <div style={{fontSize:"10px",color:"#1e293b",textAlign:"center",marginTop:"4px",letterSpacing:"0.1em"}}>FASE 1 DE 2 · DIAGNÓSTICO COGNITIVO</div>
           </div>
-
           <p style={{fontSize:"15px",color:"#e2e8f0",lineHeight:1.6,marginBottom:"28px"}}>{pregunta.texto}</p>
-
-          {pregunta.tipo==="texto"&&(
-            <div>
-              <textarea value={textInput} onChange={e=>setTextInput(e.target.value)} rows={4} placeholder="Escribe aquí..."
-                style={{width:"100%",background:"rgba(15,23,42,0.8)",border:"1px solid #334155",borderRadius:"12px",padding:"14px 16px",color:"#e2e8f0",fontSize:"14px",resize:"none",outline:"none",marginBottom:"12px"}}/>
-              <button onClick={()=>responder(textInput||"Sin descripción")} disabled={!textInput.trim()}
-                style={{...S.btn,...S.btnViolet,opacity:textInput.trim()?1:0.4}}>Continuar →</button>
-            </div>
-          )}
-
-          {pregunta.tipo==="opciones"&&(
-            <div style={{display:"flex",flexDirection:"column",gap:"8px"}}>
-              {pregunta.opciones.map(op=>(
-                <button key={op} onClick={()=>responder(op)}
-                  style={{...S.btn,...S.btnSlate,textAlign:"left",padding:"14px 16px"}}>
-                  {op}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {pregunta.tipo==="escala"&&(
-            <div>
-              <input type="range" min="1" max="10" value={escala} onChange={e=>setEscala(Number(e.target.value))} style={{width:"100%",marginBottom:"8px"}}/>
-              <div style={{display:"flex",justifyContent:"space-between",fontSize:"12px",color:"#475569",marginBottom:"20px"}}>
-                <span>{pregunta.min}</span><span style={{color:"#a78bfa",fontWeight:"500"}}>{escala}/10</span><span>{pregunta.max}</span>
-              </div>
-              <button onClick={()=>responder(escala)} style={{...S.btn,...S.btnViolet}}>Continuar →</button>
-            </div>
-          )}
-
+          {pregunta.tipo==="texto"&&(<div><textarea value={textInput} onChange={e=>setTextInput(e.target.value)} rows={4} placeholder="Escribe aquí..." style={{width:"100%",background:"rgba(15,23,42,0.8)",border:"1px solid #334155",borderRadius:"12px",padding:"14px 16px",color:"#e2e8f0",fontSize:"14px",resize:"none",outline:"none",marginBottom:"12px"}}/><button onClick={()=>responder(textInput||"Sin descripción")} disabled={!textInput.trim()} style={{...S.btn,...S.btnViolet,opacity:textInput.trim()?1:0.4}}>Continuar →</button></div>)}
+          {pregunta.tipo==="opciones"&&(<div style={{display:"flex",flexDirection:"column",gap:"8px"}}>{pregunta.opciones.map(op=>(<button key={op} onClick={()=>responder(op)} style={{...S.btn,...S.btnSlate,textAlign:"left",padding:"14px 16px"}}>{op}</button>))}</div>)}
+          {pregunta.tipo==="escala"&&(<div><input type="range" min="1" max="10" value={escala} onChange={e=>setEscala(Number(e.target.value))} style={{width:"100%",marginBottom:"8px"}}/><div style={{display:"flex",justifyContent:"space-between",fontSize:"12px",color:"#475569",marginBottom:"20px"}}><span>{pregunta.min}</span><span style={{color:"#a78bfa",fontWeight:"500"}}>{escala}/10</span><span>{pregunta.max}</span></div><button onClick={()=>responder(escala)} style={{...S.btn,...S.btnViolet}}>Continuar →</button></div>)}
           <button onClick={volver} style={{...S.btn,color:"#334155",marginTop:"20px",fontSize:"12px"}}>← Volver</button>
         </div>
       </div>
@@ -558,64 +627,30 @@ function App(){
         <ModalDetector/><BtnDetector onClick={abrirDet}/>
         <div style={{maxWidth:"440px",margin:"0 auto",paddingTop:"20px"}}>
           <div style={{fontSize:"10px",color:"#475569",textAlign:"center",letterSpacing:"0.1em",marginBottom:"20px"}}>FASE 1 COMPLETADA · DIAGNÓSTICO COGNITIVO</div>
-
           <div style={{textAlign:"center",marginBottom:"20px"}}>
             <div style={{fontSize:"32px",marginBottom:"12px"}}>◎</div>
             <span style={S.badge(diagCog.dominio)}>{dc.label}</span>
             <div style={{fontSize:"48px",fontWeight:"200",color:S.nivelColor(diagCog.nivel_hawkins),marginTop:"8px"}}>{diagCog.nivel_hawkins}</div>
             <div style={{color:"#94a3b8",fontSize:"14px"}}>{diagCog.nivel_dominante}</div>
           </div>
-
-          <div style={S.card}>
-            <div style={S.label}>Diagnóstico</div>
-            <p style={{fontSize:"14px",lineHeight:1.7,color:"#cbd5e1"}}>{diagCog.diagnostico}</p>
-          </div>
-
-          {diagCog.acim_insight&&<div style={S.cardIndigo}>
-            <div style={{...S.label,color:"#818cf8"}}>Un Curso de Milagros</div>
-            <p style={{fontSize:"14px",lineHeight:1.6,color:"#c7d2fe"}}>{diagCog.acim_insight}</p>
-          </div>}
-
-          {diagCog.afirmacion&&<div style={S.cardViolet}>
-            <p style={{fontSize:"14px",fontStyle:"italic",color:"#ede9fe"}}>"{diagCog.afirmacion}"</p>
-          </div>}
-
-          {diagCog.pregunta_ciega&&<div style={S.card}>
-            <div style={S.label}>Lo que no estás viendo</div>
-            <p style={{fontSize:"14px",fontStyle:"italic",color:"#e2e8f0"}}>"{diagCog.pregunta_ciega}"</p>
-          </div>}
-
-          {diagCog.patrones_detectados?.length>0&&<div style={S.card}>
-            <div style={S.label}>Patrones detectados</div>
-            <div style={{display:"flex",flexWrap:"wrap",gap:"8px",marginTop:"8px"}}>
-              {diagCog.patrones_detectados.map(p=>(
-                <span key={p} style={{fontSize:"12px",background:"#1e293b",border:"1px solid #334155",color:"#94a3b8",padding:"4px 10px",borderRadius:"20px"}}>{p}</span>
-              ))}
-            </div>
-          </div>}
-
-          {diagCog.meditacion_nocturna&&<div style={S.card}>
-            <div style={S.label}>🌙 Meditación para esta noche</div>
-            <p style={{fontSize:"14px",lineHeight:1.6,color:"#94a3b8"}}>{diagCog.meditacion_nocturna}</p>
-          </div>}
-
+          <div style={S.card}><div style={S.label}>Diagnóstico</div><p style={{fontSize:"14px",lineHeight:1.7,color:"#cbd5e1"}}>{diagCog.diagnostico}</p></div>
+          {diagCog.acim_insight&&<div style={S.cardIndigo}><div style={{...S.label,color:"#818cf8"}}>Un Curso de Milagros</div><p style={{fontSize:"14px",lineHeight:1.6,color:"#c7d2fe"}}>{diagCog.acim_insight}</p></div>}
+          {diagCog.afirmacion&&<div style={S.cardViolet}><p style={{fontSize:"14px",fontStyle:"italic",color:"#ede9fe"}}>"{diagCog.afirmacion}"</p></div>}
+          {diagCog.pregunta_ciega&&<div style={S.card}><div style={S.label}>Lo que no estás viendo</div><p style={{fontSize:"14px",fontStyle:"italic",color:"#e2e8f0"}}>"{diagCog.pregunta_ciega}"</p></div>}
+          {diagCog.patrones_detectados?.length>0&&<div style={S.card}><div style={S.label}>Patrones detectados</div><div style={{display:"flex",flexWrap:"wrap",gap:"8px",marginTop:"8px"}}>{diagCog.patrones_detectados.map(p=>(<span key={p} style={{fontSize:"12px",background:"#1e293b",border:"1px solid #334155",color:"#94a3b8",padding:"4px 10px",borderRadius:"20px"}}>{p}</span>))}</div></div>}
+          {diagCog.meditacion_nocturna&&<div style={S.card}><div style={S.label}>🌙 Meditación para esta noche</div><p style={{fontSize:"14px",lineHeight:1.6,color:"#94a3b8"}}>{diagCog.meditacion_nocturna}</p></div>}
           {ofrecerSom?(
             <div style={{background:"#0f172a",border:"1px solid rgba(109,40,217,0.4)",borderRadius:"16px",padding:"20px",marginTop:"8px"}}>
               <div style={{...S.label,color:"#a78bfa",marginBottom:"8px"}}>Fase 2 · Protocolo somático</div>
               <p style={{fontSize:"14px",color:"#e2e8f0",lineHeight:1.6,marginBottom:"8px"}}>La mente identificó el patrón. Ahora el cuerpo puede trabajarlo.</p>
-              <p style={{fontSize:"12px",color:"#475569",marginBottom:"4px"}}>
-                La IA sugiere: <span style={{color:"#a78bfa"}}>{pracSug==="respiracion"?"🫁 Coherencia cardíaca":"🔍 Escaneo somático"}</span>
-                {diagCog.zona_somatica_sugerida&&<> · zona: <span style={{color:"#a78bfa"}}>{ZONAS.find(z=>z.id===diagCog.zona_somatica_sugerida)?.label||diagCog.zona_somatica_sugerida}</span></>}
-              </p>
+              <p style={{fontSize:"12px",color:"#475569",marginBottom:"4px"}}>La IA sugiere: <span style={{color:"#a78bfa"}}>{pracSug==="respiracion"?"🫁 Coherencia cardíaca":"🔍 Escaneo somático"}</span>{diagCog.zona_somatica_sugerida&&<> · zona: <span style={{color:"#a78bfa"}}>{ZONAS.find(z=>z.id===diagCog.zona_somatica_sugerida)?.label||diagCog.zona_somatica_sugerida}</span></>}</p>
               {diagCog.razon_zona&&<p style={{fontSize:"11px",color:"#334155",fontStyle:"italic",marginBottom:"16px"}}>"{diagCog.razon_zona}"</p>}
               <button onClick={()=>irSomatico(diagCog)} style={{...S.btn,...S.btnViolet,marginBottom:"8px"}}>◉ Ir al protocolo somático →</button>
               <button onClick={volver} style={{...S.btn,color:"#475569",fontSize:"12px"}}>Terminar aquí por ahora</button>
             </div>
           ):(
             <div>
-              <div style={{background:"rgba(2,44,34,0.3)",border:"1px solid rgba(4,120,87,0.3)",borderRadius:"12px",padding:"12px",textAlign:"center",marginBottom:"12px"}}>
-                <p style={{color:"#6ee7b7",fontSize:"14px"}}>Estás operando desde las leyes universales.</p>
-              </div>
+              <div style={{background:"rgba(2,44,34,0.3)",border:"1px solid rgba(4,120,87,0.3)",borderRadius:"12px",padding:"12px",textAlign:"center",marginBottom:"12px"}}><p style={{color:"#6ee7b7",fontSize:"14px"}}>Estás operando desde las leyes universales.</p></div>
               <button onClick={volver} style={{...S.btn,...S.btnSlate}}>Volver al inicio</button>
             </div>
           )}
@@ -624,7 +659,6 @@ function App(){
     );
   }
 
-  // FLUJO SOMÁTICO
   if(flujo==="somatico"){
     if(faseSom==="escaneo_entrada")return(
       <div style={S.screen}>
@@ -635,42 +669,19 @@ function App(){
             <h2 style={S.h2}>¿Dónde vive el patrón en tu cuerpo ahora?</h2>
             <p style={{fontSize:"12px",color:"#475569",marginTop:"4px"}}>La IA sugirió <span style={{color:"#a78bfa"}}>{ZONAS.find(z=>z.id===zona)?.label}</span> — puedes ajustarlo.</p>
           </div>
-
           <MapaCorporal seleccionada={zona} onSelect={setZona}/>
-
-          {zona&&<div style={{...S.cardViolet,marginTop:"12px"}}>
-            <span style={{color:"#c4b5fd",fontSize:"14px"}}>{zonaData?.label}</span>
-          </div>}
-
+          {zona&&<div style={{...S.cardViolet,marginTop:"12px"}}><span style={{color:"#c4b5fd",fontSize:"14px"}}>{zonaData?.label}</span></div>}
           {zona&&<div style={{marginTop:"16px"}}>
             <div style={{marginBottom:"16px"}}>
-              <div style={{display:"flex",justifyContent:"space-between",fontSize:"12px",color:"#475569",marginBottom:"6px"}}>
-                <span>Intensidad</span><span style={{color:"#a78bfa"}}>{intEnt}/10</span>
-              </div>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:"12px",color:"#475569",marginBottom:"6px"}}><span>Intensidad</span><span style={{color:"#a78bfa"}}>{intEnt}/10</span></div>
               <input type="range" min="1" max="10" value={intEnt} onChange={e=>setIntEnt(Number(e.target.value))} style={{width:"100%"}}/>
             </div>
-
             <div style={{marginBottom:"16px"}}>
               <div style={S.label}>Cualidad de la sensación</div>
-              <div style={{display:"flex",flexWrap:"wrap",gap:"6px"}}>
-                {CUALIDADES.slice(0,10).map(c=>(
-                  <button key={c} onClick={()=>setCualEnt(c)} style={{
-                    fontSize:"12px",padding:"6px 12px",borderRadius:"20px",cursor:"pointer",
-                    background:cualEnt===c?"rgba(109,40,217,0.4)":"#0f172a",
-                    border:`1px solid ${cualEnt===c?"#7c3aed":"#334155"}`,
-                    color:cualEnt===c?"#ddd6fe":"#64748b"
-                  }}>{c}</button>
-                ))}
-              </div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:"6px"}}>{CUALIDADES.slice(0,10).map(c=>(<button key={c} onClick={()=>setCualEnt(c)} style={{fontSize:"12px",padding:"6px 12px",borderRadius:"20px",cursor:"pointer",background:cualEnt===c?"rgba(109,40,217,0.4)":"#0f172a",border:`1px solid ${cualEnt===c?"#7c3aed":"#334155"}`,color:cualEnt===c?"#ddd6fe":"#64748b"}}>{c}</button>))}</div>
             </div>
-
-            {patronSom&&<div style={{...S.card,marginBottom:"16px"}}>
-              <div style={S.label}>Patrón del diagnóstico</div>
-              <p style={{fontSize:"12px",color:"#64748b",fontStyle:"italic"}}>"{patronSom}"</p>
-            </div>}
-
-            <button onClick={()=>{if(cualEnt)setFaseSom("practica");}} disabled={!cualEnt}
-              style={{...S.btn,...S.btnViolet,opacity:cualEnt?1:0.4}}>Iniciar práctica →</button>
+            {patronSom&&<div style={{...S.card,marginBottom:"16px"}}><div style={S.label}>Patrón del diagnóstico</div><p style={{fontSize:"12px",color:"#64748b",fontStyle:"italic"}}>"{patronSom}"</p></div>}
+            <button onClick={()=>{if(cualEnt)setFaseSom("practica");}} disabled={!cualEnt} style={{...S.btn,...S.btnViolet,opacity:cualEnt?1:0.4}}>Iniciar práctica →</button>
           </div>}
         </div>
       </div>
@@ -683,38 +694,18 @@ function App(){
             <div style={{...S.label,color:"#a78bfa"}}>{tipoPrac==="respiracion"?"Coherencia cardíaca":"Escaneo somático"}</div>
             {tipoPrac==="respiracion"&&<div style={{fontSize:"12px",color:"#334155"}}>Ciclo {ciclos}/6 · {segs}s</div>}
           </div>
-
           <div style={{flex:1,display:"flex",flexDirection:"column",justifyContent:"center"}}>
-            {tipoPrac==="respiracion"?(
-              <AnimRespiracion fase={faseResp} progreso={progResp}/>
-            ):(
+            {tipoPrac==="respiracion"?(<AnimRespiracion fase={faseResp} progreso={progResp}/>):(
               <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:"24px",padding:"24px 0"}}>
-                <div style={{width:"64px",height:"64px",borderRadius:"50%",border:"1px solid rgba(139,92,246,0.4)",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                  <div style={{width:"40px",height:"40px",borderRadius:"50%",background:"rgba(139,92,246,0.2)",animation:"pulse 4s ease-in-out infinite"}}/>
-                </div>
+                <div style={{width:"64px",height:"64px",borderRadius:"50%",border:"1px solid rgba(139,92,246,0.4)",display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{width:"40px",height:"40px",borderRadius:"50%",background:"rgba(139,92,246,0.2)",animation:"pulse 4s ease-in-out infinite"}}/></div>
                 <div style={{maxWidth:"280px",textAlign:"center"}}>
-                  {["Lleva toda tu atención hacia "+zonaData?.label+". Sin intentar cambiar nada. Solo observa.",
-                    "Respira hacia esa zona. Con cada inhala la atención se hace más precisa.",
-                    "Nota la cualidad. ¿Es calor, frío, presión, vacío? Nómbralo internamente.",
-                    "Pregúntale a esa sensación: ¿qué necesitas de mí? No esperes palabras.",
-                    "El cuerpo sabe lo que necesita hacer. Tu trabajo es no interrumpirlo.",
-                    "Permite que la sensación haga lo que naturalmente quiera hacer."
-                  ].map((txt,i)=>(
-                    <p key={i} style={{fontSize:"14px",lineHeight:1.6,color:i===pasoEsc?"#e2e8f0":"#1e293b",marginBottom:"8px",transition:"color 1s"}}>{txt}</p>
-                  ))}
+                  {["Lleva toda tu atención hacia "+zonaData?.label+". Sin intentar cambiar nada. Solo observa.","Respira hacia esa zona. Con cada inhala la atención se hace más precisa.","Nota la cualidad. ¿Es calor, frío, presión, vacío? Nómbralo internamente.","Pregúntale a esa sensación: ¿qué necesitas de mí? No esperes palabras.","El cuerpo sabe lo que necesita hacer. Tu trabajo es no interrumpirlo.","Permite que la sensación haga lo que naturalmente quiera hacer."].map((txt,i)=>(<p key={i} style={{fontSize:"14px",lineHeight:1.6,color:i===pasoEsc?"#e2e8f0":"#1e293b",marginBottom:"8px",transition:"color 1s"}}>{txt}</p>))}
                 </div>
-                <div style={{display:"flex",gap:"6px"}}>
-                  {[0,1,2,3,4,5].map(i=><div key={i} style={{width:"6px",height:"6px",borderRadius:"50%",background:i<=pasoEsc?"#7c3aed":"#1e293b"}}/>)}
-                </div>
+                <div style={{display:"flex",gap:"6px"}}>{[0,1,2,3,4,5].map(i=><div key={i} style={{width:"6px",height:"6px",borderRadius:"50%",background:i<=pasoEsc?"#7c3aed":"#1e293b"}}/>)}</div>
               </div>
             )}
           </div>
-
-          <div style={{...S.card,textAlign:"center",marginBottom:"12px"}}>
-            <span style={{color:"#a78bfa",fontSize:"14px"}}>{zonaData?.label} · {cualEnt} {intEnt}/10</span>
-            {patronSom&&<div style={{color:"#334155",fontSize:"12px",fontStyle:"italic",marginTop:"4px"}}>"{patronSom}"</div>}
-          </div>
-
+          <div style={{...S.card,textAlign:"center",marginBottom:"12px"}}><span style={{color:"#a78bfa",fontSize:"14px"}}>{zonaData?.label} · {cualEnt} {intEnt}/10</span>{patronSom&&<div style={{color:"#334155",fontSize:"12px",fontStyle:"italic",marginTop:"4px"}}>"{patronSom}"</div>}</div>
           {tipoPrac==="escaneo"&&<button onClick={()=>setFaseSom("escaneo_salida")} style={{color:"#334155",fontSize:"12px",textAlign:"center",padding:"8px",background:"none",border:"none",cursor:"pointer"}}>Completar práctica →</button>}
         </div>
       </div>
@@ -723,49 +714,17 @@ function App(){
     if(faseSom==="escaneo_salida")return(
       <div style={S.screen}>
         <div style={{maxWidth:"360px",margin:"0 auto",paddingTop:"20px"}}>
-          <div style={{marginBottom:"20px"}}>
-            <div style={{...S.label,color:"#34d399"}}>Escaneo de salida</div>
-            <h2 style={S.h2}>¿Qué sientes en {zonaData?.label} ahora?</h2>
-            <p style={{fontSize:"12px",color:"#475569",marginTop:"4px"}}>Antes: {cualEnt} · {intEnt}/10</p>
-          </div>
-
+          <div style={{marginBottom:"20px"}}><div style={{...S.label,color:"#34d399"}}>Escaneo de salida</div><h2 style={S.h2}>¿Qué sientes en {zonaData?.label} ahora?</h2><p style={{fontSize:"12px",color:"#475569",marginTop:"4px"}}>Antes: {cualEnt} · {intEnt}/10</p></div>
           <div style={{marginBottom:"16px"}}>
-            <div style={{display:"flex",justifyContent:"space-between",fontSize:"12px",color:"#475569",marginBottom:"6px"}}>
-              <span>Intensidad ahora</span>
-              <span style={{fontWeight:"500",color:intSal<intEnt?"#34d399":intSal>intEnt?"#fbbf24":"#94a3b8"}}>
-                {intSal}/10 {intSal<intEnt&&`(−${intEnt-intSal})`}
-              </span>
-            </div>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:"12px",color:"#475569",marginBottom:"6px"}}><span>Intensidad ahora</span><span style={{fontWeight:"500",color:intSal<intEnt?"#34d399":intSal>intEnt?"#fbbf24":"#94a3b8"}}>{intSal}/10 {intSal<intEnt&&`(−${intEnt-intSal})`}</span></div>
             <input type="range" min="1" max="10" value={intSal} onChange={e=>setIntSal(Number(e.target.value))} style={{width:"100%",accentColor:"#34d399"}}/>
           </div>
-
           <div style={{marginBottom:"16px"}}>
             <div style={S.label}>¿Cómo la describirías ahora?</div>
-            <div style={{display:"flex",flexWrap:"wrap",gap:"6px"}}>
-              {CUALIDADES.map(c=>(
-                <button key={c} onClick={()=>setCualSal(c)} style={{
-                  fontSize:"12px",padding:"6px 12px",borderRadius:"20px",cursor:"pointer",
-                  background:cualSal===c?"rgba(4,120,87,0.3)":"#0f172a",
-                  border:`1px solid ${cualSal===c?"#059669":"#334155"}`,
-                  color:cualSal===c?"#6ee7b7":"#64748b"
-                }}>{c}</button>
-              ))}
-            </div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:"6px"}}>{CUALIDADES.map(c=>(<button key={c} onClick={()=>setCualSal(c)} style={{fontSize:"12px",padding:"6px 12px",borderRadius:"20px",cursor:"pointer",background:cualSal===c?"rgba(4,120,87,0.3)":"#0f172a",border:`1px solid ${cualSal===c?"#059669":"#334155"}`,color:cualSal===c?"#6ee7b7":"#64748b"}}>{c}</button>))}</div>
           </div>
-
-          {intSal!==intEnt&&<div style={{
-            padding:"12px",borderRadius:"12px",textAlign:"center",marginBottom:"16px",
-            background:intSal<intEnt?"rgba(2,44,34,0.4)":"rgba(120,53,15,0.3)",
-            border:`1px solid ${intSal<intEnt?"rgba(4,120,87,0.4)":"rgba(180,83,9,0.3)"}`,
-            color:intSal<intEnt?"#6ee7b7":"#fcd34d",fontSize:"14px"
-          }}>
-            {intSal<intEnt?`Tu cuerpo se movió ${intEnt-intSal} puntos en ${segs}s.`:"El cuerpo está procesando. Eso también es movimiento."}
-          </div>}
-
-          <button onClick={procesarEvidencia} disabled={!cualSal||genEv}
-            style={{...S.btn,...S.btnEmerald,opacity:!cualSal||genEv?0.4:1,marginBottom:"8px"}}>
-            {genEv?"Generando evidencia...":"Generar evidencia somática →"}
-          </button>
+          {intSal!==intEnt&&<div style={{padding:"12px",borderRadius:"12px",textAlign:"center",marginBottom:"16px",background:intSal<intEnt?"rgba(2,44,34,0.4)":"rgba(120,53,15,0.3)",border:`1px solid ${intSal<intEnt?"rgba(4,120,87,0.4)":"rgba(180,83,9,0.3)"}`,color:intSal<intEnt?"#6ee7b7":"#fcd34d",fontSize:"14px"}}>{intSal<intEnt?`Tu cuerpo se movió ${intEnt-intSal} puntos en ${segs}s.`:"El cuerpo está procesando. Eso también es movimiento."}</div>}
+          <button onClick={procesarEvidencia} disabled={!cualSal||genEv} style={{...S.btn,...S.btnEmerald,opacity:!cualSal||genEv?0.4:1,marginBottom:"8px"}}>{genEv?"Generando evidencia...":"Generar evidencia somática →"}</button>
           {error&&<p style={{color:"#f87171",fontSize:"12px",textAlign:"center"}}>{error}</p>}
         </div>
       </div>
@@ -783,21 +742,9 @@ function App(){
               <div style={{textAlign:"center"}}><div style={{fontSize:"28px",fontWeight:"300",color:"#34d399"}}>{intSal}</div><div style={{fontSize:"11px",color:"#475569"}}>{cualSal}</div></div>
             </div>
           </div>
-
-          <div style={{...S.card,borderColor:"rgba(4,120,87,0.3)"}}>
-            <div style={{...S.label,color:"#34d399"}}>Lo que acaba de ocurrir</div>
-            <p style={{fontSize:"14px",lineHeight:1.7,color:"#d1fae5"}}>{evidIA.evidencia}</p>
-          </div>
-
-          <div style={{...S.cardEmerald}}>
-            <div style={{...S.label,color:"#34d399"}}>Nueva evidencia instalada</div>
-            <p style={{fontSize:"14px",fontStyle:"italic",color:"#a7f3d0"}}>"{evidIA.frase_ancla}"</p>
-          </div>
-
-          {evidIA.patron_disuelto&&<div style={{textAlign:"center",marginBottom:"16px"}}>
-            <span style={{fontSize:"12px",background:"#1e293b",border:"1px solid #334155",color:"#64748b",padding:"4px 12px",borderRadius:"20px"}}>{evidIA.patron_disuelto}</span>
-          </div>}
-
+          <div style={{...S.card,borderColor:"rgba(4,120,87,0.3)"}}><div style={{...S.label,color:"#34d399"}}>Lo que acaba de ocurrir</div><p style={{fontSize:"14px",lineHeight:1.7,color:"#d1fae5"}}>{evidIA.evidencia}</p></div>
+          <div style={{...S.cardEmerald}}><div style={{...S.label,color:"#34d399"}}>Nueva evidencia instalada</div><p style={{fontSize:"14px",fontStyle:"italic",color:"#a7f3d0"}}>"{evidIA.frase_ancla}"</p></div>
+          {evidIA.patron_disuelto&&<div style={{textAlign:"center",marginBottom:"16px"}}><span style={{fontSize:"12px",background:"#1e293b",border:"1px solid #334155",color:"#64748b",padding:"4px 12px",borderRadius:"20px"}}>{evidIA.patron_disuelto}</span></div>}
           <button onClick={()=>setFaseSom("testimonio")} style={{...S.btn,...S.btnEmerald}}>Escribir mi testimonio →</button>
         </div>
       </div>
@@ -806,19 +753,10 @@ function App(){
     if(faseSom==="testimonio")return(
       <div style={S.screen}>
         <div style={{maxWidth:"360px",margin:"0 auto",paddingTop:"20px"}}>
-          <div style={{marginBottom:"20px"}}>
-            <div style={{...S.label,color:"#a78bfa"}}>Tu testimonio</div>
-            <h2 style={S.h2}>Nómbralo con tus palabras</h2>
-            <p style={{fontSize:"12px",color:"#475569",marginTop:"4px"}}>No lo que entendiste. Lo que el cuerpo vivió.</p>
-          </div>
-          <div style={{...S.card,marginBottom:"16px"}}>
-            <p style={{fontSize:"13px",fontStyle:"italic",color:"#6ee7b7"}}>"{evidIA?.frase_ancla}"</p>
-          </div>
-          <textarea value={testimonio} onChange={e=>setTestimonio(e.target.value)} rows={5}
-            placeholder="Lo que mi cuerpo acaba de demostrar es..."
-            style={{width:"100%",background:"#0f172a",border:"1px solid #334155",borderRadius:"12px",padding:"14px 16px",color:"#e2e8f0",fontSize:"14px",resize:"none",outline:"none",marginBottom:"12px"}}/>
-          <button onClick={guardarTestimonio} disabled={!testimonio?.trim()}
-            style={{...S.btn,...S.btnViolet,opacity:testimonio?.trim()?1:0.4}}>Guardar evidencia →</button>
+          <div style={{marginBottom:"20px"}}><div style={{...S.label,color:"#a78bfa"}}>Tu testimonio</div><h2 style={S.h2}>Nómbralo con tus palabras</h2><p style={{fontSize:"12px",color:"#475569",marginTop:"4px"}}>No lo que entendiste. Lo que el cuerpo vivió.</p></div>
+          <div style={{...S.card,marginBottom:"16px"}}><p style={{fontSize:"13px",fontStyle:"italic",color:"#6ee7b7"}}>"{evidIA?.frase_ancla}"</p></div>
+          <textarea value={testimonio} onChange={e=>setTestimonio(e.target.value)} rows={5} placeholder="Lo que mi cuerpo acaba de demostrar es..." style={{width:"100%",background:"#0f172a",border:"1px solid #334155",borderRadius:"12px",padding:"14px 16px",color:"#e2e8f0",fontSize:"14px",resize:"none",outline:"none",marginBottom:"12px"}}/>
+          <button onClick={guardarTestimonio} disabled={!testimonio?.trim()} style={{...S.btn,...S.btnViolet,opacity:testimonio?.trim()?1:0.4}}>Guardar evidencia →</button>
         </div>
       </div>
     );
@@ -837,45 +775,22 @@ function App(){
     </div>
   );
 
-  // ─── TABS ─────────────────────────────────────────────────────────────────
   const hoy=new Date().toLocaleDateString("es-ES",{weekday:"long",day:"numeric",month:"long"});
+
+  if(tab==="evolucion")return(<TabEvolucion setTab={setTab}/>);
 
   if(tab==="inicio")return(
     <div style={S.screen}>
       <ModalDetector/><BtnDetector onClick={abrirDet}/>
       <div style={{maxWidth:"360px",margin:"0 auto"}}>
-        <div style={{paddingTop:"20px",marginBottom:"20px"}}>
-          <div style={{fontSize:"32px",marginBottom:"8px"}}>◎</div>
-          <h1 style={S.h1}>Campo de Conciencia</h1>
-          <p style={{fontSize:"12px",color:"#334155",textTransform:"capitalize",marginTop:"4px"}}>{hoy}</p>
-        </div>
-
-        {leccion&&<div style={{...S.cardIndigo,marginBottom:"16px"}}>
-          <div style={{display:"flex",justifyContent:"space-between",marginBottom:"8px"}}>
-            <div style={{...S.label,color:"#818cf8"}}>Lección del día</div>
-            <div style={{fontSize:"11px",color:"#312e81"}}>#{leccion.numero}</div>
-          </div>
-          <p style={{fontSize:"14px",fontStyle:"italic",lineHeight:1.6,color:"#c7d2fe"}}>"{leccion.frase_dia}"</p>
-        </div>}
-
-        <div style={{...S.cardViolet,marginBottom:"16px"}}>
-          <div style={{...S.label,color:"#7c3aed",marginBottom:"8px"}}>Afirmación</div>
-          <p style={{fontSize:"14px",fontStyle:"italic",color:"#ede9fe"}}>"{AFIRMACIONES[afirmIdx%AFIRMACIONES.length]}"</p>
-          <button onClick={()=>setAfirmIdx(i=>i+1)} style={{color:"#5b21b6",fontSize:"12px",marginTop:"8px",background:"none",border:"none",cursor:"pointer"}}>siguiente →</button>
-        </div>
-
+        <div style={{paddingTop:"20px",marginBottom:"20px"}}><div style={{fontSize:"32px",marginBottom:"8px"}}>◎</div><h1 style={S.h1}>Campo de Conciencia</h1><p style={{fontSize:"12px",color:"#334155",textTransform:"capitalize",marginTop:"4px"}}>{hoy}</p></div>
+        {leccion&&<div style={{...S.cardIndigo,marginBottom:"16px"}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:"8px"}}><div style={{...S.label,color:"#818cf8"}}>Lección del día</div><div style={{fontSize:"11px",color:"#312e81"}}>#{leccion.numero}</div></div><p style={{fontSize:"14px",fontStyle:"italic",lineHeight:1.6,color:"#c7d2fe"}}>"{leccion.frase_dia}"</p></div>}
+        <div style={{...S.cardViolet,marginBottom:"16px"}}><div style={{...S.label,color:"#7c3aed",marginBottom:"8px"}}>Afirmación</div><p style={{fontSize:"14px",fontStyle:"italic",color:"#ede9fe"}}>"{AFIRMACIONES[afirmIdx%AFIRMACIONES.length]}"</p><button onClick={()=>setAfirmIdx(i=>i+1)} style={{color:"#5b21b6",fontSize:"12px",marginTop:"8px",background:"none",border:"none",cursor:"pointer"}}>siguiente →</button></div>
         <div style={{marginBottom:"8px"}}>
           <div style={S.label}>Iniciar proceso</div>
-          <button onClick={()=>iniciarEval("situacion")} style={{...S.btn,...S.btnViolet,textAlign:"left",padding:"16px",marginBottom:"8px"}}>
-            <div style={{fontSize:"14px",fontWeight:"500",color:"#ddd6fe",marginBottom:"2px"}}>Evaluar una situación</div>
-            <div style={{fontSize:"12px",color:"#7c3aed"}}>Cognitivo → Somático → Evidencia</div>
-          </button>
-          <button onClick={()=>iniciarEval("diaria")} style={{...S.btn,...S.btnSlate,textAlign:"left",padding:"16px"}}>
-            <div style={{fontSize:"14px",fontWeight:"500",color:"#e2e8f0",marginBottom:"2px"}}>Reflexión diaria</div>
-            <div style={{fontSize:"12px",color:"#475569"}}>¿Desde dónde operé hoy?</div>
-          </button>
+          <button onClick={()=>iniciarEval("situacion")} style={{...S.btn,...S.btnViolet,textAlign:"left",padding:"16px",marginBottom:"8px"}}><div style={{fontSize:"14px",fontWeight:"500",color:"#ddd6fe",marginBottom:"2px"}}>Evaluar una situación</div><div style={{fontSize:"12px",color:"#7c3aed"}}>Cognitivo → Somático → Evidencia</div></button>
+          <button onClick={()=>iniciarEval("diaria")} style={{...S.btn,...S.btnSlate,textAlign:"left",padding:"16px"}}><div style={{fontSize:"14px",fontWeight:"500",color:"#e2e8f0",marginBottom:"2px"}}>Reflexión diaria</div><div style={{fontSize:"12px",color:"#475569"}}>¿Desde dónde operé hoy?</div></button>
         </div>
-
         <p style={{fontSize:"11px",color:"#1e293b",textAlign:"center",marginTop:"16px"}}>⚡ detector rápido siempre disponible</p>
       </div>
       <NavBar tab={tab} setTab={setTab}/>
@@ -886,35 +801,10 @@ function App(){
     <div style={S.screen}>
       <ModalDetector/><BtnDetector onClick={abrirDet}/>
       <div style={{maxWidth:"360px",margin:"0 auto"}}>
-        <div style={{paddingTop:"20px",marginBottom:"20px"}}>
-          <h2 style={S.h1}>Ancla Diaria</h2>
-          <p style={{fontSize:"12px",color:"#475569",marginTop:"4px"}}>5 momentos de consciencia</p>
-        </div>
-
-        <div style={{...S.card,marginBottom:"16px"}}>
-          <p style={{fontSize:"13px",fontStyle:"italic",color:"#475569"}}>"Si supieras constantemente que todo es perfecto, ¿cómo actuarías?"</p>
-        </div>
-
-        {MOMENTOS_ANCLA.map(m=>(
-          <div key={m.id} style={{...S.card}}>
-            <div style={{display:"flex",alignItems:"flex-start",gap:"12px",marginBottom:"12px"}}>
-              <span style={{fontSize:"20px"}}>{m.icono}</span>
-              <div>
-                <div style={{fontSize:"14px",color:"#e2e8f0",fontWeight:"500"}}>{m.momento}</div>
-                <div style={{fontSize:"12px",color:"#475569",marginTop:"2px"}}>{m.instruccion}</div>
-              </div>
-            </div>
-            <div style={{background:"rgba(30,41,59,0.6)",borderRadius:"10px",padding:"12px",borderLeft:"2px solid #7c3aed"}}>
-              <p style={{fontSize:"13px",fontStyle:"italic",color:"#c4b5fd"}}>"{m.pregunta}"</p>
-            </div>
-          </div>
-        ))}
-
-        {leccion&&<div style={{...S.cardIndigo,marginTop:"4px"}}>
-          <div style={{...S.label,color:"#818cf8"}}>Lección #{leccion.numero}</div>
-          <p style={{fontSize:"13px",fontStyle:"italic",color:"#c7d2fe"}}>"{leccion.frase_dia}"</p>
-        </div>}
-
+        <div style={{paddingTop:"20px",marginBottom:"20px"}}><h2 style={S.h1}>Ancla Diaria</h2><p style={{fontSize:"12px",color:"#475569",marginTop:"4px"}}>5 momentos de consciencia</p></div>
+        <div style={{...S.card,marginBottom:"16px"}}><p style={{fontSize:"13px",fontStyle:"italic",color:"#475569"}}>"Si supieras constantemente que todo es perfecto, ¿cómo actuarías?"</p></div>
+        {MOMENTOS_ANCLA.map(m=>(<div key={m.id} style={{...S.card}}><div style={{display:"flex",alignItems:"flex-start",gap:"12px",marginBottom:"12px"}}><span style={{fontSize:"20px"}}>{m.icono}</span><div><div style={{fontSize:"14px",color:"#e2e8f0",fontWeight:"500"}}>{m.momento}</div><div style={{fontSize:"12px",color:"#475569",marginTop:"2px"}}>{m.instruccion}</div></div></div><div style={{background:"rgba(30,41,59,0.6)",borderRadius:"10px",padding:"12px",borderLeft:"2px solid #7c3aed"}}><p style={{fontSize:"13px",fontStyle:"italic",color:"#c4b5fd"}}>"{m.pregunta}"</p></div></div>))}
+        {leccion&&<div style={{...S.cardIndigo,marginTop:"4px"}}><div style={{...S.label,color:"#818cf8"}}>Lección #{leccion.numero}</div><p style={{fontSize:"13px",fontStyle:"italic",color:"#c7d2fe"}}>"{leccion.frase_dia}"</p></div>}
         <button onClick={()=>iniciarEval("diaria")} style={{...S.btn,...S.btnViolet,marginTop:"8px"}}>Hacer reflexión diaria →</button>
       </div>
       <NavBar tab={tab} setTab={setTab}/>
@@ -925,65 +815,11 @@ function App(){
     <div style={S.screen}>
       <ModalDetector/><BtnDetector onClick={abrirDet}/>
       <div style={{maxWidth:"360px",margin:"0 auto"}}>
-        <div style={{paddingTop:"20px",marginBottom:"20px"}}>
-          <h2 style={S.h1}>Historial</h2>
-          <p style={{fontSize:"12px",color:"#475569",marginTop:"4px"}}>Cognitivo · Somático · Evidencias</p>
-        </div>
-
-        {histData.patrones.length>0&&<div style={{...S.card,marginBottom:"16px"}}>
-          <div style={S.label}>Patrones recurrentes</div>
-          <div style={{display:"flex",flexWrap:"wrap",gap:"6px",marginTop:"8px"}}>
-            {histData.patrones.map(p=>(
-              <span key={p.patron} style={{fontSize:"12px",background:"#1e293b",border:"1px solid #334155",color:"#94a3b8",padding:"4px 10px",borderRadius:"20px"}}>
-                {p.patron} <span style={{color:"#334155"}}>×{p.frecuencia}</span>
-              </span>
-            ))}
-          </div>
-        </div>}
-
-        {histData.evidencias.length>0&&<div style={{marginBottom:"20px"}}>
-          <div style={S.label}>Evidencias corporales</div>
-          {histData.evidencias.map(e=>(
-            <div key={e.id} style={{...S.card,borderColor:"rgba(4,120,87,0.2)"}}>
-              <div style={{display:"flex",justifyContent:"space-between",marginBottom:"6px"}}>
-                <span style={{fontSize:"12px",background:"#1e293b",color:"#64748b",padding:"2px 8px",borderRadius:"10px"}}>{e.zona}</span>
-                <span style={{fontSize:"11px",color:"#334155"}}>{formatFecha(e.created_at)}</span>
-              </div>
-              {e.patron&&<div style={{fontSize:"12px",color:"#34d399",fontStyle:"italic",marginBottom:"6px"}}>"{e.patron}"</div>}
-              <p style={{fontSize:"13px",color:"#94a3b8",lineHeight:1.5}}>"{e.testimonio}"</p>
-              <div style={{fontSize:"11px",color:"#475569",marginTop:"6px"}}>{e.nivel_antes} → <span style={{color:e.nivel_despues<e.nivel_antes?"#34d399":"#fbbf24"}}>{e.nivel_despues}</span></div>
-            </div>
-          ))}
-        </div>}
-
-        {histData.evals.length>0&&<div style={{marginBottom:"20px"}}>
-          <div style={S.label}>Evaluaciones</div>
-          {histData.evals.map(h=>{
-            const dc=domCol[h.dominio]||domCol.transicion;
-            return(
-              <div key={h.id} style={S.card}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"8px"}}>
-                  <div>
-                    <span style={S.badge(h.dominio)}>{dc.label}</span>
-                    <div style={{fontSize:"24px",fontWeight:"300",color:S.nivelColor(h.nivel_hawkins),marginTop:"6px"}}>{h.nivel_hawkins} <span style={{fontSize:"13px",color:"#64748b"}}>— {h.nivel_dominante}</span></div>
-                  </div>
-                  <div style={{fontSize:"11px",color:"#334155"}}>{formatFecha(h.created_at)}</div>
-                </div>
-                {h.situacion_descripcion&&<p style={{fontSize:"12px",color:"#475569",fontStyle:"italic",borderLeft:"2px solid #334155",paddingLeft:"10px",marginBottom:"8px"}}>"{h.situacion_descripcion}"</p>}
-                <p style={{fontSize:"13px",color:"#94a3b8",lineHeight:1.5}}>{h.diagnostico}</p>
-                {h.insight_principal&&<p style={{fontSize:"12px",color:"#a78bfa",fontStyle:"italic",borderLeft:"2px solid #4c1d95",paddingLeft:"10px",marginTop:"8px"}}>{h.insight_principal}</p>}
-                {h.patrones_detectados?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:"4px",marginTop:"8px"}}>
-                  {h.patrones_detectados.map(p=><span key={p} style={{fontSize:"11px",background:"#1e293b",color:"#475569",padding:"2px 8px",borderRadius:"10px"}}>{p}</span>)}
-                </div>}
-              </div>
-            );
-          })}
-        </div>}
-
-        {!histData.evals.length&&!histData.evidencias.length&&(
-          <div style={{textAlign:"center",padding:"48px 0",color:"#334155",fontSize:"14px"}}>Aún no hay sesiones guardadas.</div>
-        )}
-
+        <div style={{paddingTop:"20px",marginBottom:"20px"}}><h2 style={S.h1}>Historial</h2><p style={{fontSize:"12px",color:"#475569",marginTop:"4px"}}>Cognitivo · Somático · Evidencias</p></div>
+        {histData.patrones.length>0&&<div style={{...S.card,marginBottom:"16px"}}><div style={S.label}>Patrones recurrentes</div><div style={{display:"flex",flexWrap:"wrap",gap:"6px",marginTop:"8px"}}>{histData.patrones.map(p=>(<span key={p.patron} style={{fontSize:"12px",background:"#1e293b",border:"1px solid #334155",color:"#94a3b8",padding:"4px 10px",borderRadius:"20px"}}>{p.patron} <span style={{color:"#334155"}}>×{p.frecuencia}</span></span>))}</div></div>}
+        {histData.evidencias.length>0&&<div style={{marginBottom:"20px"}}><div style={S.label}>Evidencias corporales</div>{histData.evidencias.map(e=>(<div key={e.id} style={{...S.card,borderColor:"rgba(4,120,87,0.2)"}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:"6px"}}><span style={{fontSize:"12px",background:"#1e293b",color:"#64748b",padding:"2px 8px",borderRadius:"10px"}}>{e.zona}</span><span style={{fontSize:"11px",color:"#334155"}}>{formatFecha(e.created_at)}</span></div>{e.patron&&<div style={{fontSize:"12px",color:"#34d399",fontStyle:"italic",marginBottom:"6px"}}>"{e.patron}"</div>}<p style={{fontSize:"13px",color:"#94a3b8",lineHeight:1.5}}>"{e.testimonio}"</p><div style={{fontSize:"11px",color:"#475569",marginTop:"6px"}}>{e.nivel_antes} → <span style={{color:e.nivel_despues<e.nivel_antes?"#34d399":"#fbbf24"}}>{e.nivel_despues}</span></div></div>))}</div>}
+        {histData.evals.length>0&&<div style={{marginBottom:"20px"}}><div style={S.label}>Evaluaciones</div>{histData.evals.map(h=>{const dc=domCol[h.dominio]||domCol.transicion;return(<div key={h.id} style={S.card}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"8px"}}><div><span style={S.badge(h.dominio)}>{dc.label}</span><div style={{fontSize:"24px",fontWeight:"300",color:S.nivelColor(h.nivel_hawkins),marginTop:"6px"}}>{h.nivel_hawkins} <span style={{fontSize:"13px",color:"#64748b"}}>— {h.nivel_dominante}</span></div></div><div style={{fontSize:"11px",color:"#334155"}}>{formatFecha(h.created_at)}</div></div>{h.situacion_descripcion&&<p style={{fontSize:"12px",color:"#475569",fontStyle:"italic",borderLeft:"2px solid #334155",paddingLeft:"10px",marginBottom:"8px"}}>"{h.situacion_descripcion}"</p>}<p style={{fontSize:"13px",color:"#94a3b8",lineHeight:1.5}}>{h.diagnostico}</p>{h.insight_principal&&<p style={{fontSize:"12px",color:"#a78bfa",fontStyle:"italic",borderLeft:"2px solid #4c1d95",paddingLeft:"10px",marginTop:"8px"}}>{h.insight_principal}</p>}{h.patrones_detectados?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:"4px",marginTop:"8px"}}>{h.patrones_detectados.map(p=><span key={p} style={{fontSize:"11px",background:"#1e293b",color:"#475569",padding:"2px 8px",borderRadius:"10px"}}>{p}</span>)}</div>}</div>);})}</div>}
+        {!histData.evals.length&&!histData.evidencias.length&&(<div style={{textAlign:"center",padding:"48px 0",color:"#334155",fontSize:"14px"}}>Aún no hay sesiones guardadas.</div>)}
         <button onClick={()=>iniciarEval("situacion")} style={{...S.btn,...S.btnViolet}}>Nueva sesión</button>
       </div>
       <NavBar tab={tab} setTab={setTab}/>
@@ -992,6 +828,12 @@ function App(){
 
   return null;
 }
+
+const domCol={
+  universal:{grad:"linear-gradient(180deg,#1e1b4b,#4c1d95,#020617)",label:"Leyes Universales · Espíritu"},
+  ego:{grad:"linear-gradient(180deg,#450a0a,#020617,#020617)",label:"Leyes del Ego · Miedo"},
+  transicion:{grad:"linear-gradient(180deg,#451a03,#020617,#020617)",label:"En Transición"},
+};
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 </script>
