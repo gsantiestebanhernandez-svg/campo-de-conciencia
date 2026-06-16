@@ -24,9 +24,6 @@
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
   @keyframes ping{0%{transform:scale(1);opacity:0.8}100%{transform:scale(2);opacity:0}}
   @keyframes breathe{0%,100%{transform:scale(0.6)}50%{transform:scale(1)}}
-  .animate-pulse{animation:pulse 2s ease-in-out infinite}
-  .animate-ping{animation:ping 3s ease-out infinite}
-  .animate-breathe{animation:breathe 5s ease-in-out infinite}
 </style>
 </head>
 <body>
@@ -37,16 +34,6 @@ const { useState, useEffect, useRef } = React;
 const SB_URL = "https://qgczftnuflxvrhlbyelb.supabase.co";
 const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFnY3pmdG51Zmx4dnJobGJ5ZWxiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODExNTUxNjgsImV4cCI6MjA5NjczMTE2OH0.yfySblwq_oIa6oMbdg2O0OXM_TzSmaL4HfSaPVdFw5M";
 const WORKER_URL = "https://anthropic-proxy.gsantiestebanhernandez.workers.dev";
-
-const PREGUNTAS_SITUACION = [
-  {id:"q1",texto:"¿Qué está pasando? Describe en una o dos frases.",tipo:"texto"},
-  {id:"q2",texto:"¿Cuál es tu primera reacción emocional?",tipo:"opciones",opciones:["Miedo / ansiedad","Enojo / resentimiento","Tristeza / resignación","Culpa / vergüenza","Paz / aceptación","Curiosidad / apertura","Compasión / amor"]},
-  {id:"q3",texto:"¿Estás buscando cambiar a la otra persona o la situación?",tipo:"opciones",opciones:["Sí, necesito que ellos cambien","En parte sí","No, me estoy mirando a mí mismo"]},
-  {id:"q4",texto:"¿Cómo interpretas lo que ocurre?",tipo:"opciones",opciones:["Es culpa de otro / del mundo","Es mi culpa / soy el problema","Es una circunstancia sin culpables","Es una señal de algo que debo ver en mí"]},
-  {id:"q5",texto:"¿Qué tan presente está el miedo a perder algo?",tipo:"escala",min:"Nada",max:"Totalmente"},
-  {id:"q6",texto:"¿Estás decidiendo desde la urgencia o desde la claridad?",tipo:"opciones",opciones:["Urgencia / presión","Un poco de los dos","Claridad / espacio interior"]},
-  {id:"q7",texto:"Si la situación desapareciera mañana sola, ¿cómo te sientes?",tipo:"opciones",opciones:["Aliviado — eso es lo que quiero","Algo vacío — necesitaba resolverlo yo","Bien — no estoy apegado al resultado"]},
-];
 
 const PREGUNTAS_DIARIA = [
   {id:"d1",texto:"¿Desde qué estado emocional comenzaste tu día?",tipo:"opciones",opciones:["Miedo / tensión","Enojo / irritación","Tristeza / pesadez","Neutralidad / calma","Entusiasmo / gratitud","Amor / conexión"]},
@@ -89,7 +76,7 @@ const AFIRMACIONES = ["Podría ver paz en lugar de esto.","No hay nada que mi sa
 const PATRON_A_PRACTICA = {"miedo":"respiracion","urgencia":"respiracion","ansiedad":"respiracion","tensión":"respiracion","resistencia":"escaneo","resentimiento":"escaneo","control":"escaneo","culpa":"escaneo","rabia":"escaneo"};
 
 function inferirPractica(dominio,nivel,patrones){
-  if(nivel<150)return"respiracion";
+  if(nivel<150)return "respiracion";
   const txt=(patrones||[]).join(" ").toLowerCase();
   for(const[k,v]of Object.entries(PATRON_A_PRACTICA))if(txt.includes(k))return v;
   return dominio==="ego"?"respiracion":"escaneo";
@@ -117,10 +104,7 @@ async function llamarIA(sistema,usuario){
     method:"POST",
     headers:{"Content-Type":"application/json"},
     body:JSON.stringify({
-      messages:[
-        {role:"system",content:sistema},
-        {role:"user",content:usuario}
-      ],
+      messages:[{role:"system",content:sistema},{role:"user",content:usuario}],
       max_tokens:1200,
       temperature:0.7
     })
@@ -130,6 +114,16 @@ async function llamarIA(sistema,usuario){
   const t=d.choices?.[0]?.message?.content||"";
   if(!t)throw new Error("Respuesta vacía");
   return JSON.parse(t.replace(/```json\n?/g,"").replace(/```\n?/g,"").trim());
+}
+
+async function generarPreguntasPersonalizadas(situacion){
+  const s=`Eres un terapeuta de BNE/INBio y Hawkins. El usuario describió su situación.
+Genera exactamente 4 preguntas de indagación profunda y personalizada para ESA situación específica.
+Cada pregunta debe tener 3-4 opciones de respuesta cortas y concretas.
+Las preguntas deben explorar: emoción dominante, patrón de percepción, nivel de apego/control, y origen del malestar.
+Responde SOLO JSON válido, sin texto adicional, sin markdown:
+[{"id":"p2","texto":"pregunta específica","tipo":"opciones","opciones":["opción 1","opción 2","opción 3"]},{"id":"p3","texto":"...","tipo":"opciones","opciones":["...","...","..."]},{"id":"p4","texto":"...","tipo":"opciones","opciones":["...","...","..."]},{"id":"p5","texto":"...","tipo":"opciones","opciones":["...","...","..."]}]`;
+  return llamarIA(s,`Situación del usuario: "${situacion}"`);
 }
 
 async function generarDiagnostico(tipo,respuestas,pats,leccion,rapido){
@@ -152,25 +146,31 @@ Responde SOLO JSON: {"evidencia":"párrafo 3-4 oraciones","frase_ancla":"Tu cuer
 }
 
 const S = {
-  screen: {minHeight:"100vh",background:"#020617",color:"#f1f5f9",padding:"20px",paddingBottom:"80px"},
-  screenGrad: (c)=>({minHeight:"100vh",background:c,color:"#f1f5f9",padding:"20px",paddingBottom:"80px"}),
-  card: {background:"rgba(15,23,42,0.7)",border:"1px solid rgba(51,65,85,0.5)",borderRadius:"16px",padding:"20px",marginBottom:"12px"},
-  cardViolet: {background:"rgba(46,16,101,0.4)",border:"1px solid rgba(109,40,217,0.3)",borderRadius:"16px",padding:"16px",marginBottom:"12px"},
-  cardIndigo: {background:"rgba(30,27,75,0.6)",border:"1px solid rgba(67,56,202,0.3)",borderRadius:"16px",padding:"16px",marginBottom:"12px"},
-  cardEmerald: {background:"rgba(2,44,34,0.4)",border:"1px solid rgba(4,120,87,0.3)",borderRadius:"16px",padding:"16px",marginBottom:"12px"},
-  btn: {width:"100%",padding:"12px",borderRadius:"12px",fontSize:"14px",fontFamily:"inherit",cursor:"pointer",transition:"all 0.2s"},
-  btnViolet: {background:"rgba(109,40,217,0.6)",border:"1px solid rgba(124,58,237,0.4)",color:"#ede9fe"},
-  btnSlate: {background:"rgba(30,41,59,0.6)",border:"1px solid rgba(51,65,85,0.5)",color:"#cbd5e1"},
-  btnEmerald: {background:"rgba(4,120,87,0.5)",border:"1px solid rgba(16,185,129,0.3)",color:"#a7f3d0"},
-  label: {fontSize:"10px",letterSpacing:"0.15em",textTransform:"uppercase",color:"#64748b",marginBottom:"6px"},
-  h1: {fontSize:"18px",fontWeight:"300",letterSpacing:"0.2em",textTransform:"uppercase",color:"#e2e8f0"},
-  h2: {fontSize:"16px",fontWeight:"300",color:"#e2e8f0"},
-  badge: (dominio)=>{
+  screen:{minHeight:"100vh",background:"#020617",color:"#f1f5f9",padding:"20px",paddingBottom:"80px"},
+  screenGrad:(c)=>({minHeight:"100vh",background:c,color:"#f1f5f9",padding:"20px",paddingBottom:"80px"}),
+  card:{background:"rgba(15,23,42,0.7)",border:"1px solid rgba(51,65,85,0.5)",borderRadius:"16px",padding:"20px",marginBottom:"12px"},
+  cardViolet:{background:"rgba(46,16,101,0.4)",border:"1px solid rgba(109,40,217,0.3)",borderRadius:"16px",padding:"16px",marginBottom:"12px"},
+  cardIndigo:{background:"rgba(30,27,75,0.6)",border:"1px solid rgba(67,56,202,0.3)",borderRadius:"16px",padding:"16px",marginBottom:"12px"},
+  cardEmerald:{background:"rgba(2,44,34,0.4)",border:"1px solid rgba(4,120,87,0.3)",borderRadius:"16px",padding:"16px",marginBottom:"12px"},
+  btn:{width:"100%",padding:"12px",borderRadius:"12px",fontSize:"14px",fontFamily:"inherit",cursor:"pointer",transition:"all 0.2s"},
+  btnViolet:{background:"rgba(109,40,217,0.6)",border:"1px solid rgba(124,58,237,0.4)",color:"#ede9fe"},
+  btnSlate:{background:"rgba(30,41,59,0.6)",border:"1px solid rgba(51,65,85,0.5)",color:"#cbd5e1"},
+  btnEmerald:{background:"rgba(4,120,87,0.5)",border:"1px solid rgba(16,185,129,0.3)",color:"#a7f3d0"},
+  label:{fontSize:"10px",letterSpacing:"0.15em",textTransform:"uppercase",color:"#64748b",marginBottom:"6px"},
+  h1:{fontSize:"18px",fontWeight:"300",letterSpacing:"0.2em",textTransform:"uppercase",color:"#e2e8f0"},
+  h2:{fontSize:"16px",fontWeight:"300",color:"#e2e8f0"},
+  badge:(dominio)=>{
     const m={universal:{bg:"rgba(109,40,217,0.2)",border:"rgba(124,58,237,0.4)",color:"#ddd6fe"},ego:{bg:"rgba(127,29,29,0.3)",border:"rgba(185,28,28,0.4)",color:"#fecaca"},transicion:{bg:"rgba(120,53,15,0.3)",border:"rgba(180,83,9,0.4)",color:"#fde68a"}};
     const c=m[dominio]||m.transicion;
     return{display:"inline-block",padding:"3px 10px",borderRadius:"20px",fontSize:"11px",background:c.bg,border:`1px solid ${c.border}`,color:c.color};
   },
   nivelColor:(n)=>!n?"#94a3b8":n>=500?"#c4b5fd":n>=350?"#93c5fd":n>=200?"#6ee7b7":n>=100?"#fcd34d":"#fca5a5",
+};
+
+const domCol={
+  universal:{grad:"linear-gradient(180deg,#1e1b4b,#4c1d95,#020617)",label:"Leyes Universales · Espíritu"},
+  ego:{grad:"linear-gradient(180deg,#450a0a,#020617,#020617)",label:"Leyes del Ego · Miedo"},
+  transicion:{grad:"linear-gradient(180deg,#451a03,#020617,#020617)",label:"En Transición"},
 };
 
 const formatFecha = iso => new Date(iso).toLocaleDateString("es-ES",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"});
@@ -211,7 +211,6 @@ function TabEvolucion({setTab}){
   };
 
   const getSlice=()=>evals.length===0?getDemoData():evals.slice(-periodo);
-
   const buildTrend=(vals)=>{
     const n=vals.length;if(n<2)return vals;
     const xm=(n-1)/2,ym=vals.reduce((s,v)=>s+v,0)/n;
@@ -291,20 +290,18 @@ function TabEvolucion({setTab}){
             <span style={{fontSize:"12px",color:"#64748b"}}>Progresión</span>
             <div style={{display:"flex",gap:"4px"}}>
               {[7,14,30].map(p=>(
-                <button key={p} onClick={()=>setPeriodo(p)} style={{fontSize:"11px",padding:"3px 10px",borderRadius:"8px",cursor:"pointer",background:periodo===p?"rgba(124,58,237,0.4)":"rgba(30,41,59,0.6)",border:`1px solid ${periodo===p?"#7c3aed":"#334155"}`,color:periodo===p?"#ddd6fe":"#475569"}}>
-                  {p}d
-                </button>
+                <button key={p} onClick={()=>setPeriodo(p)} style={{fontSize:"11px",padding:"3px 10px",borderRadius:"8px",cursor:"pointer",background:periodo===p?"rgba(124,58,237,0.4)":"rgba(30,41,59,0.6)",border:`1px solid ${periodo===p?"#7c3aed":"#334155"}`,color:periodo===p?"#ddd6fe":"#475569"}}>{p}d</button>
               ))}
             </div>
           </div>
           <div style={{position:"relative",height:"220px"}}>
-            <canvas ref={canvasRef} role="img" aria-label="Gráfico de evolución del nivel de conciencia Hawkins"/>
+            <canvas ref={canvasRef} role="img" aria-label="Gráfico evolución Hawkins"/>
             {!chartLoaded&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{fontSize:"24px",animation:"pulse 2s infinite",color:"#7c3aed"}}>◎</div></div>}
           </div>
           <div style={{display:"flex",flexWrap:"wrap",gap:"12px",marginTop:"12px",fontSize:"11px",color:"#475569"}}>
-            <span style={{display:"flex",alignItems:"center",gap:"4px"}}><span style={{width:"10px",height:"10px",borderRadius:"50%",background:"#7c3aed",display:"inline-block"}}/>Nivel calibrado</span>
-            <span style={{display:"flex",alignItems:"center",gap:"4px"}}><span style={{width:"14px",height:"2px",background:"#34d399",display:"inline-block",borderRadius:"1px"}}/>Tendencia</span>
-            <span style={{display:"flex",alignItems:"center",gap:"4px"}}><span style={{width:"10px",height:"2px",background:"#f87171",display:"inline-block",borderRadius:"1px"}}/>Umbral 200</span>
+            <span style={{display:"flex",alignItems:"center",gap:"4px"}}><span style={{width:"10px",height:"10px",borderRadius:"50%",background:"#7c3aed",display:"inline-block"}}/>Nivel</span>
+            <span style={{display:"flex",alignItems:"center",gap:"4px"}}><span style={{width:"14px",height:"2px",background:"#34d399",display:"inline-block"}}/>Tendencia</span>
+            <span style={{display:"flex",alignItems:"center",gap:"4px"}}><span style={{width:"10px",height:"2px",background:"#f87171",display:"inline-block"}}/>Umbral 200</span>
           </div>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"6px",marginBottom:"16px"}}>
@@ -314,7 +311,7 @@ function TabEvolucion({setTab}){
             {nombre:"Expansión",rango:"350–1000",color:"#34d399",bg:"rgba(2,44,34,0.3)"},
           ].map(z=>(
             <div key={z.nombre} style={{background:z.bg,border:`1px solid ${z.color}30`,borderRadius:"10px",padding:"10px"}}>
-              <div style={{fontSize:"10px",color:z.color,marginBottom:"2px",letterSpacing:"0.05em"}}>{z.nombre}</div>
+              <div style={{fontSize:"10px",color:z.color,marginBottom:"2px"}}>{z.nombre}</div>
               <div style={{fontSize:"12px",color:"#94a3b8"}}>{z.rango}</div>
             </div>
           ))}
@@ -338,8 +335,7 @@ function MapaCorporal({seleccionada,onSelect}){
         <rect x="53" y="55" width="13" height="38" rx="4" fill="#8b5cf6"/>
       </svg>
       {ZONAS.map(z=>(
-        <button key={z.id} onClick={()=>onSelect(z.id)}
-          style={{position:"absolute",transform:"translate(-50%,-50%)",left:`${z.x}%`,top:`${z.y}%`,background:"none",border:"none",cursor:"pointer",padding:"4px"}}>
+        <button key={z.id} onClick={()=>onSelect(z.id)} style={{position:"absolute",transform:"translate(-50%,-50%)",left:`${z.x}%`,top:`${z.y}%`,background:"none",border:"none",cursor:"pointer",padding:"4px"}}>
           <div style={{width:seleccionada===z.id?"24px":"16px",height:seleccionada===z.id?"24px":"16px",borderRadius:"50%",border:seleccionada===z.id?"2px solid #a78bfa":"2px solid #475569",background:seleccionada===z.id?"#7c3aed":"rgba(30,41,59,0.8)",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.2s",boxShadow:seleccionada===z.id?"0 0 12px rgba(124,58,237,0.6)":"none"}}>
             {seleccionada===z.id&&<div style={{width:"8px",height:"8px",background:"white",borderRadius:"50%"}}/>}
           </div>
@@ -356,7 +352,7 @@ function AnimRespiracion({fase,progreso}){
     <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"32px 0",gap:"16px"}}>
       <div style={{position:"relative",width:"140px",height:"140px",display:"flex",alignItems:"center",justifyContent:"center"}}>
         <div style={{position:"absolute",inset:0,borderRadius:"50%",border:"1px solid rgba(139,92,246,0.2)",animation:"ping 3s ease-out infinite"}}/>
-        <div style={{width:"96px",height:"96px",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",transform:`scale(${escala})`,background:`radial-gradient(circle, ${color}40, ${color}15)`,border:`2px solid ${color}60`,boxShadow:`0 0 30px ${color}25`,transition:"transform 0.1s ease-out"}}>
+        <div style={{width:"96px",height:"96px",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",transform:`scale(${escala})`,background:`radial-gradient(circle, ${color}40, ${color}15)`,border:`2px solid ${color}60`,transition:"transform 0.1s ease-out"}}>
           <span style={{color:"rgba(255,255,255,0.8)",fontSize:"12px",letterSpacing:"0.1em",textTransform:"uppercase"}}>{fase==="inhala"?"Inhala":"Exhala"}</span>
         </div>
       </div>
@@ -381,7 +377,7 @@ function NavBar({tab,setTab}){
 
 function BtnDetector({onClick}){
   return(
-    <button onClick={onClick} style={{position:"fixed",bottom:"70px",right:"20px",zIndex:40,width:"48px",height:"48px",borderRadius:"50%",background:"#7c3aed",border:"none",cursor:"pointer",fontSize:"20px",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 0 20px rgba(124,58,237,0.5)",transition:"transform 0.2s"}}>⚡</button>
+    <button onClick={onClick} style={{position:"fixed",bottom:"70px",right:"20px",zIndex:40,width:"48px",height:"48px",borderRadius:"50%",background:"#7c3aed",border:"none",cursor:"pointer",fontSize:"20px",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 0 20px rgba(124,58,237,0.5)"}}>⚡</button>
   );
 }
 
@@ -391,6 +387,7 @@ function App(){
   const [tipoEval,setTipoEval]=useState(null);
   const [paso,setPaso]=useState(0);
   const [respuestas,setRespuestas]=useState({});
+  const [preguntasDinamicas,setPreguntasDinamicas]=useState([]);
   const [textInput,setTextInput]=useState("");
   const [escala,setEscala]=useState(5);
   const [diagCog,setDiagCog]=useState(null);
@@ -420,13 +417,22 @@ function App(){
   const [leccion,setLeccion]=useState(null);
   const [histData,setHistData]=useState({evals:[],sesiones:[],patrones:[],evidencias:[]});
   const [afirmIdx,setAfirmIdx]=useState(0);
-  const [loading,setLoading]=useState(false);
   const [error,setError]=useState(null);
   const [genEv,setGenEv]=useState(false);
 
-  const preguntas=tipoEval==="situacion"?PREGUNTAS_SITUACION:PREGUNTAS_DIARIA;
-  const pregunta=preguntas[paso];
   const zonaData=ZONAS.find(z=>z.id===zona);
+
+  // Pregunta actual según flujo
+  const getPreguntaActual=()=>{
+    if(tipoEval==="situacion"){
+      if(paso===0)return{id:"q1",texto:"¿Qué está pasando? Describe en una o dos frases.",tipo:"texto"};
+      return preguntasDinamicas[paso-1]||null;
+    }
+    return PREGUNTAS_DIARIA[paso]||null;
+  };
+  const getTotalPreguntas=()=>tipoEval==="situacion"?5:PREGUNTAS_DIARIA.length;
+  const preguntaActual=getPreguntaActual();
+  const totalPreguntas=getTotalPreguntas();
 
   useEffect(()=>{
     (async()=>{
@@ -459,17 +465,39 @@ function App(){
     return()=>clearInterval(timerRef.current);
   },[flujo,faseSom,tipoPrac]);
 
-  const iniciarEval=(tipo)=>{setTipoEval(tipo);setPaso(0);setRespuestas({});setTextInput("");setEscala(5);setDiagCog(null);setError(null);setFlujo("evaluacion");};
+  const iniciarEval=(tipo)=>{
+    setTipoEval(tipo);setPaso(0);setRespuestas({});setTextInput("");setEscala(5);
+    setDiagCog(null);setError(null);setPreguntasDinamicas([]);setFlujo("evaluacion");
+  };
 
-  const responder=(v)=>{
-    const n={...respuestas,[pregunta.id]:v};
+  const responder=async(v)=>{
+    const idActual=tipoEval==="situacion"?(paso===0?"q1":preguntasDinamicas[paso-1]?.id):PREGUNTAS_DIARIA[paso]?.id;
+    const n={...respuestas,[idActual]:v};
     setRespuestas(n);setTextInput("");setEscala(5);
-    if(paso<preguntas.length-1)setPaso(paso+1);
-    else procesarDiag(n);
+
+    // Situación: después de q1 generar preguntas dinámicas
+    if(tipoEval==="situacion"&&paso===0){
+      setFlujo("generando_preguntas");
+      try{
+        const pgs=await generarPreguntasPersonalizadas(v);
+        if(!Array.isArray(pgs)||pgs.length===0)throw new Error("No se generaron preguntas");
+        setPreguntasDinamicas(pgs);
+        setPaso(1);
+        setFlujo("evaluacion");
+      }catch(e){
+        setError("Error generando preguntas: "+e.message);
+        setFlujo("error");
+      }
+      return;
+    }
+
+    const esUltima=tipoEval==="situacion"?paso>=4:paso>=PREGUNTAS_DIARIA.length-1;
+    if(!esUltima){setPaso(paso+1);}
+    else{procesarDiag(n);}
   };
 
   const procesarDiag=async(resp)=>{
-    setLoading(true);setError(null);setFlujo("loading");
+    setFlujo("loading");setError(null);
     try{
       const pats=await sbGet("patrones_acumulados?order=frecuencia.desc&limit=15");
       const pf=Array.isArray(pats)?pats:[];
@@ -478,7 +506,6 @@ function App(){
       for(const p of(diag.patrones_detectados||[]))await upsertPatron(p);
       setDiagCog(diag);setFlujo("resultado");
     }catch(e){setError(e.message);setFlujo("error");}
-    finally{setLoading(false);}
   };
 
   const irSomatico=(diag)=>{
@@ -529,12 +556,6 @@ function App(){
 
   const volver=()=>{setFlujo(null);setError(null);};
 
-  const domCol={
-    universal:{grad:"linear-gradient(180deg,#1e1b4b,#4c1d95,#020617)",label:"Leyes Universales · Espíritu"},
-    ego:{grad:"linear-gradient(180deg,#450a0a,#020617,#020617)",label:"Leyes del Ego · Miedo"},
-    transicion:{grad:"linear-gradient(180deg,#451a03,#020617,#020617)",label:"En Transición"},
-  };
-
   function ModalDetector(){
     if(!detOpen)return null;
     const pg=PREGUNTAS_DETECTOR[detPaso];
@@ -546,16 +567,10 @@ function App(){
             <button onClick={()=>setDetOpen(false)} style={{background:"none",border:"none",color:"#475569",fontSize:"24px",cursor:"pointer",lineHeight:1}}>×</button>
           </div>
           {detLoading?(
-            <div style={{textAlign:"center",padding:"40px 0"}}>
-              <div style={{fontSize:"32px",animation:"pulse 2s infinite"}}>◎</div>
-              <p style={{color:"#475569",fontSize:"12px",marginTop:"12px"}}>Leyendo el campo...</p>
-            </div>
+            <div style={{textAlign:"center",padding:"40px 0"}}><div style={{fontSize:"32px",animation:"pulse 2s infinite"}}>◎</div><p style={{color:"#475569",fontSize:"12px",marginTop:"12px"}}>Leyendo el campo...</p></div>
           ):detRes?(
             detRes.error?(
-              <div>
-                <p style={{color:"#f87171",fontSize:"14px",background:"rgba(127,29,29,0.2)",padding:"12px",borderRadius:"12px",marginBottom:"12px"}}>{detRes.error}</p>
-                <button onClick={()=>{setDetPaso(0);setDetResp({});setDetRes(null);}} style={{...S.btn,...S.btnSlate}}>Reintentar</button>
-              </div>
+              <div><p style={{color:"#f87171",fontSize:"14px",background:"rgba(127,29,29,0.2)",padding:"12px",borderRadius:"12px",marginBottom:"12px"}}>{detRes.error}</p><button onClick={()=>{setDetPaso(0);setDetResp({});setDetRes(null);}} style={{...S.btn,...S.btnSlate}}>Reintentar</button></div>
             ):(
               <div>
                 <div style={{textAlign:"center",marginBottom:"16px"}}>
@@ -565,26 +580,17 @@ function App(){
                 </div>
                 <div style={{...S.card,marginBottom:"12px"}}><p style={{fontSize:"14px",lineHeight:1.6,color:"#cbd5e1"}}>{detRes.diagnostico}</p></div>
                 {detRes.afirmacion&&<div style={{...S.cardViolet,marginBottom:"12px"}}><p style={{fontSize:"14px",fontStyle:"italic",color:"#ede9fe"}}>"{detRes.afirmacion}"</p></div>}
-                <div style={{...S.cardEmerald,marginBottom:"12px"}}>
-                  <div style={{...S.label,color:"#6ee7b7",marginBottom:"6px"}}>Haz esto ahora</div>
-                  <p style={{fontSize:"14px",color:"#d1fae5"}}>{detRes.practica}</p>
-                </div>
-                {(detRes.dominio==="ego"||detRes.dominio==="transicion")&&(
-                  <button onClick={()=>{setDetOpen(false);irSomatico(detRes);}} style={{...S.btn,...S.btnViolet,marginBottom:"8px"}}>◉ Ir al protocolo somático →</button>
-                )}
+                <div style={{...S.cardEmerald,marginBottom:"12px"}}><div style={{...S.label,color:"#6ee7b7",marginBottom:"6px"}}>Haz esto ahora</div><p style={{fontSize:"14px",color:"#d1fae5"}}>{detRes.practica}</p></div>
+                {(detRes.dominio==="ego"||detRes.dominio==="transicion")&&(<button onClick={()=>{setDetOpen(false);irSomatico(detRes);}} style={{...S.btn,...S.btnViolet,marginBottom:"8px"}}>◉ Ir al protocolo somático →</button>)}
                 <button onClick={()=>setDetOpen(false)} style={{...S.btn,...S.btnSlate}}>Cerrar</button>
               </div>
             )
           ):(
             <div>
-              <div style={{height:"2px",background:"#1e293b",borderRadius:"1px",marginBottom:"20px"}}>
-                <div style={{height:"2px",background:"#7c3aed",borderRadius:"1px",width:`${(detPaso/PREGUNTAS_DETECTOR.length)*100}%`,transition:"width 0.3s"}}/>
-              </div>
+              <div style={{height:"2px",background:"#1e293b",borderRadius:"1px",marginBottom:"20px"}}><div style={{height:"2px",background:"#7c3aed",borderRadius:"1px",width:`${(detPaso/PREGUNTAS_DETECTOR.length)*100}%`,transition:"width 0.3s"}}/></div>
               <p style={{fontSize:"15px",color:"#e2e8f0",lineHeight:1.6,marginBottom:"24px"}}>{pg?.texto}</p>
               <div style={{display:"flex",flexDirection:"column",gap:"8px"}}>
-                {pg?.opciones.map((op,i)=>(
-                  <button key={op} onClick={()=>responderDet(op)} style={{...S.btn,textAlign:"left",padding:"14px 16px",background:"rgba(15,23,42,0.6)",border:`1px solid ${i===0?"rgba(185,28,28,0.3)":i===2?"rgba(4,120,87,0.3)":"rgba(51,65,85,0.5)"}`,color:"#cbd5e1",fontSize:"14px"}}>{op}</button>
-                ))}
+                {pg?.opciones.map((op,i)=>(<button key={op} onClick={()=>responderDet(op)} style={{...S.btn,textAlign:"left",padding:"14px 16px",background:"rgba(15,23,42,0.6)",border:`1px solid ${i===0?"rgba(185,28,28,0.3)":i===2?"rgba(4,120,87,0.3)":"rgba(51,65,85,0.5)"}`,color:"#cbd5e1",fontSize:"14px"}}>{op}</button>))}
               </div>
             </div>
           )}
@@ -593,25 +599,77 @@ function App(){
     );
   }
 
-  if(flujo==="loading")return(<div style={{...S.screen,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:"16px"}}><div style={{fontSize:"40px",animation:"pulse 2s infinite",color:"#a78bfa"}}>◎</div><p style={{color:"#475569",fontSize:"12px",letterSpacing:"0.15em",textTransform:"uppercase"}}>Leyendo el campo...</p><p style={{color:"#1e293b",fontSize:"12px"}}>Hawkins · ACIM · BNE</p></div>);
+  // ── PANTALLAS ──────────────────────────────────────────────────────────────
 
-  if(flujo==="error")return(<div style={{...S.screen,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:"20px"}}><div style={{fontSize:"32px"}}>⚠</div><p style={{color:"#f87171",fontSize:"14px",textAlign:"center",maxWidth:"280px"}}>{error}</p><button onClick={volver} style={{...S.btn,...S.btnSlate,maxWidth:"200px"}}>Volver al inicio</button></div>);
+  if(flujo==="generando_preguntas")return(
+    <div style={{...S.screen,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:"20px"}}>
+      <div style={{fontSize:"48px",animation:"pulse 2s infinite",color:"#a78bfa"}}>◎</div>
+      <div style={{textAlign:"center",maxWidth:"260px"}}>
+        <p style={{color:"#e2e8f0",fontSize:"15px",lineHeight:1.6,marginBottom:"8px"}}>Leyendo tu situación...</p>
+        <p style={{color:"#475569",fontSize:"12px"}}>Preparando preguntas personalizadas · Hawkins · BNE</p>
+      </div>
+    </div>
+  );
 
-  if(flujo==="evaluacion"&&pregunta){
-    const prog=(paso/preguntas.length)*100;
+  if(flujo==="loading")return(
+    <div style={{...S.screen,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:"16px"}}>
+      <div style={{fontSize:"40px",animation:"pulse 2s infinite",color:"#a78bfa"}}>◎</div>
+      <p style={{color:"#475569",fontSize:"12px",letterSpacing:"0.15em",textTransform:"uppercase"}}>Leyendo el campo...</p>
+      <p style={{color:"#1e293b",fontSize:"12px"}}>Hawkins · ACIM · BNE</p>
+    </div>
+  );
+
+  if(flujo==="error")return(
+    <div style={{...S.screen,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:"20px"}}>
+      <div style={{fontSize:"32px"}}>⚠</div>
+      <p style={{color:"#f87171",fontSize:"14px",textAlign:"center",maxWidth:"280px"}}>{error}</p>
+      <button onClick={volver} style={{...S.btn,...S.btnSlate,maxWidth:"200px"}}>Volver al inicio</button>
+    </div>
+  );
+
+  if(flujo==="evaluacion"&&preguntaActual){
+    const prog=(paso/totalPreguntas)*100;
     return(
       <div style={S.screen}>
         <ModalDetector/><BtnDetector onClick={abrirDet}/>
         <div style={{maxWidth:"440px",margin:"0 auto",paddingTop:"20px"}}>
           <div style={{marginBottom:"28px"}}>
-            <div style={{display:"flex",justifyContent:"space-between",fontSize:"12px",color:"#475569",marginBottom:"6px"}}><span>{tipoEval==="situacion"?"Situación":"Reflexión diaria"}</span><span>{paso+1} / {preguntas.length}</span></div>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:"12px",color:"#475569",marginBottom:"6px"}}>
+              <span>{tipoEval==="situacion"?"Situación":"Reflexión diaria"}</span>
+              <span>{paso+1} / {totalPreguntas}</span>
+            </div>
             <div style={{height:"2px",background:"#1e293b",borderRadius:"1px"}}><div style={{height:"2px",background:"#7c3aed",borderRadius:"1px",width:`${prog}%`,transition:"width 0.5s"}}/></div>
-            <div style={{fontSize:"10px",color:"#1e293b",textAlign:"center",marginTop:"4px",letterSpacing:"0.1em"}}>FASE 1 DE 2 · DIAGNÓSTICO COGNITIVO</div>
+            {paso>0&&tipoEval==="situacion"&&<div style={{fontSize:"10px",color:"#7c3aed",textAlign:"center",marginTop:"4px",letterSpacing:"0.08em"}}>Preguntas generadas para tu situación</div>}
           </div>
-          <p style={{fontSize:"15px",color:"#e2e8f0",lineHeight:1.6,marginBottom:"28px"}}>{pregunta.texto}</p>
-          {pregunta.tipo==="texto"&&(<div><textarea value={textInput} onChange={e=>setTextInput(e.target.value)} rows={4} placeholder="Escribe aquí..." style={{width:"100%",background:"rgba(15,23,42,0.8)",border:"1px solid #334155",borderRadius:"12px",padding:"14px 16px",color:"#e2e8f0",fontSize:"14px",resize:"none",outline:"none",marginBottom:"12px"}}/><button onClick={()=>responder(textInput||"Sin descripción")} disabled={!textInput.trim()} style={{...S.btn,...S.btnViolet,opacity:textInput.trim()?1:0.4}}>Continuar →</button></div>)}
-          {pregunta.tipo==="opciones"&&(<div style={{display:"flex",flexDirection:"column",gap:"8px"}}>{pregunta.opciones.map(op=>(<button key={op} onClick={()=>responder(op)} style={{...S.btn,...S.btnSlate,textAlign:"left",padding:"14px 16px"}}>{op}</button>))}</div>)}
-          {pregunta.tipo==="escala"&&(<div><input type="range" min="1" max="10" value={escala} onChange={e=>setEscala(Number(e.target.value))} style={{width:"100%",marginBottom:"8px"}}/><div style={{display:"flex",justifyContent:"space-between",fontSize:"12px",color:"#475569",marginBottom:"20px"}}><span>{pregunta.min}</span><span style={{color:"#a78bfa",fontWeight:"500"}}>{escala}/10</span><span>{pregunta.max}</span></div><button onClick={()=>responder(escala)} style={{...S.btn,...S.btnViolet}}>Continuar →</button></div>)}
+
+          <p style={{fontSize:"15px",color:"#e2e8f0",lineHeight:1.6,marginBottom:"28px"}}>{preguntaActual.texto}</p>
+
+          {preguntaActual.tipo==="texto"&&(
+            <div>
+              <textarea value={textInput} onChange={e=>setTextInput(e.target.value)} rows={4} placeholder="Escribe aquí..."
+                style={{width:"100%",background:"rgba(15,23,42,0.8)",border:"1px solid #334155",borderRadius:"12px",padding:"14px 16px",color:"#e2e8f0",fontSize:"14px",resize:"none",outline:"none",marginBottom:"12px"}}/>
+              <button onClick={()=>responder(textInput||"Sin descripción")} disabled={!textInput.trim()} style={{...S.btn,...S.btnViolet,opacity:textInput.trim()?1:0.4}}>Continuar →</button>
+            </div>
+          )}
+
+          {preguntaActual.tipo==="opciones"&&(
+            <div style={{display:"flex",flexDirection:"column",gap:"8px"}}>
+              {preguntaActual.opciones.map(op=>(
+                <button key={op} onClick={()=>responder(op)} style={{...S.btn,...S.btnSlate,textAlign:"left",padding:"14px 16px"}}>{op}</button>
+              ))}
+            </div>
+          )}
+
+          {preguntaActual.tipo==="escala"&&(
+            <div>
+              <input type="range" min="1" max="10" value={escala} onChange={e=>setEscala(Number(e.target.value))} style={{width:"100%",marginBottom:"8px"}}/>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:"12px",color:"#475569",marginBottom:"20px"}}>
+                <span>{preguntaActual.min}</span><span style={{color:"#a78bfa",fontWeight:"500"}}>{escala}/10</span><span>{preguntaActual.max}</span>
+              </div>
+              <button onClick={()=>responder(escala)} style={{...S.btn,...S.btnViolet}}>Continuar →</button>
+            </div>
+          )}
+
           <button onClick={volver} style={{...S.btn,color:"#334155",marginTop:"20px",fontSize:"12px"}}>← Volver</button>
         </div>
       </div>
@@ -768,7 +826,7 @@ function App(){
         <div style={{fontSize:"48px",marginBottom:"16px"}}>◉</div>
         <div style={{...S.label,color:"#34d399",marginBottom:"8px"}}>Proceso completo</div>
         <h2 style={{...S.h2,marginBottom:"12px"}}>Cognitivo + somático integrados.</h2>
-        <p style={{fontSize:"13px",color:"#475569",lineHeight:1.6,marginBottom:"28px"}}>La mente nombró el patrón. El cuerpo lo trabajó. La evidencia quedó guardada. Así se entrena la conciencia.</p>
+        <p style={{fontSize:"13px",color:"#475569",lineHeight:1.6,marginBottom:"28px"}}>La mente nombró el patrón. El cuerpo lo trabajó. La evidencia quedó guardada.</p>
         <button onClick={volver} style={{...S.btn,...S.btnViolet,marginBottom:"8px"}}>Nueva sesión</button>
         <button onClick={()=>{volver();setTab("historial");}} style={{color:"#475569",fontSize:"12px",background:"none",border:"none",cursor:"pointer",width:"100%",padding:"8px"}}>Ver mis evidencias →</button>
       </div>
@@ -828,12 +886,6 @@ function App(){
 
   return null;
 }
-
-const domCol={
-  universal:{grad:"linear-gradient(180deg,#1e1b4b,#4c1d95,#020617)",label:"Leyes Universales · Espíritu"},
-  ego:{grad:"linear-gradient(180deg,#450a0a,#020617,#020617)",label:"Leyes del Ego · Miedo"},
-  transicion:{grad:"linear-gradient(180deg,#451a03,#020617,#020617)",label:"En Transición"},
-};
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 </script>
