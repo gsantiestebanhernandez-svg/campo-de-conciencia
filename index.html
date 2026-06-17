@@ -113,7 +113,10 @@ async function llamarIA(sistema,usuario){
   const d=await r.json();
   const t=d.choices?.[0]?.message?.content||"";
   if(!t)throw new Error("Respuesta vacía");
-  return JSON.parse(t.replace(/```json\n?/g,"").replace(/```\n?/g,"").trim());
+  const clean = t.replace(/```json\n?/g,"").replace(/```\n?/g,"").trim();
+  const match = clean.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
+  if(!match) throw new Error("No se encontró JSON válido en la respuesta");
+  return JSON.parse(match[1]);
 }
 
 async function generarPreguntasPersonalizadas(situacion){
